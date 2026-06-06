@@ -1600,38 +1600,52 @@ def trainer_app() -> None:
 def learner_app() -> None:
     learner = st.session_state.learner
     st.title("Espace apprenant")
-
     st.markdown("""
-    <div id="v20_4_soft_layout_marker" style="
-        padding: 18px 22px;
-        border-radius: 18px;
-        background: linear-gradient(135deg, #f8fafc 0%, #eef2ff 100%);
-        border: 1px solid #e5e7eb;
-        margin-bottom: 18px;">
-        <h3 style="margin:0 0 8px 0;">Navigation apprenant</h3>
-        <p style="margin:0; color:#4b5563;">
-            Parcours recommandé : <b>S’entraîner</b> → <b>Examen autonome</b> → <b>Mes résultats</b>.
-            La session dirigée reste une option pour les travaux en live.
-        </p>
-    </div>
+    <style id="v21_2_learner_fullwidth_css">
+    section[data-testid="stSidebar"] {
+        display: none !important;
+    }
+    .block-container {
+        max-width: none !important;
+        width: 100% !important;
+        padding-left: 1.1rem !important;
+        padding-right: 1.1rem !important;
+        padding-top: 0.8rem !important;
+    }
+    div[data-testid="stExpander"] {
+        border-radius: 16px !important;
+        overflow: hidden !important;
+    }
+    div[data-testid="stForm"] {
+        border: 2px solid #bfdbfe !important;
+        border-radius: 18px !important;
+        padding: 1rem !important;
+        background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%) !important;
+    }
+    </style>
     """, unsafe_allow_html=True)
 
-    nav_cols = st.columns(5)
-    nav_cols[0].info("S’entraîner\n\nDepuis la banque")
-    nav_cols[1].info("Examen autonome\n\nMode cadré")
-    nav_cols[2].info("Session autonome\n\nAvec code")
-    nav_cols[3].info("Session live\n\nDirigée")
-    nav_cols[4].info("Mes résultats\n\nGraphiques conservés")
+    user_cols = st.columns([3, 1])
+    with user_cols[0]:
+        st.success(
+            f"Connecté : {learner.get('name', '-')}"
+            f" | Identifiant : {learner.get('email', '-')}"
+            f" | Groupe : {learner.get('group_name') or '-'}"
+        )
+    with user_cols[1]:
+        st.button("Se déconnecter", on_click=logout, width="stretch", key="v21_2_logout_top")
 
 
-    with st.sidebar:
-        st.success(f"Connecté : {learner['name']}")
-        st.caption(learner["email"])
-        st.button("Se déconnecter", on_click=logout, width="stretch")
 
-    tab_take, tab_my_results = st.tabs(["Passer un quiz / s’entraîner", "Mes résultats et restitutions"])
+    learner_page = st.radio(
+        "Navigation apprenant",
+        ["Passer un quiz / s’entraîner", "Mes résultats et restitutions"],
+        horizontal=True,
+        label_visibility="collapsed",
+        key="learner_page_v21_4",
+    )
 
-    with tab_take:
+    if learner_page == "Passer un quiz / s’entraîner":
         st.subheader("Choisir et passer un quiz")
 
         try:
@@ -1914,16 +1928,20 @@ def learner_app() -> None:
                 details = get_attempt_answers(attempt_id)
                 render_attempt_report(current_attempt, details, show_learner=False)
 
-    with tab_my_results:
-        st.subheader("Mes résultats")
-        attempts = get_attempts_for_learner_email(learner["email"], limit=100)
+    if learner_page == "Mes résultats et restitutions":
+        st.subheader("Mes résultats et restitutions")
+
+        learner_email = learner.get("email", "")
+        attempts = get_attempts_for_learner_email(learner_email, limit=100)
+
+        st.info(f"Profil affiché : {learner_email or '-'} — {len(attempts)} tentative(s) trouvée(s).")
 
         if not attempts:
-            st.info("Aucun résultat enregistré pour ce profil.")
+            st.warning("Aucun résultat enregistré pour ce profil.")
         else:
             labels = [
-                f"{attempt['created_at']} | {attempt['quiz_title']} | "
-                f"{attempt['percentage']}% | niveau conseillé : {attempt.get('recommended_level') or '-'}"
+                f"{attempt.get('created_at', '')} | {attempt.get('quiz_title', '')} | "
+                f"{attempt.get('percentage', 0)}% | niveau conseillé : {attempt.get('recommended_level') or '-'}"
                 for attempt in attempts
             ]
 
@@ -1931,12 +1949,25 @@ def learner_app() -> None:
                 "Choisir une tentative à afficher",
                 options=list(range(len(attempts))),
                 format_func=lambda i: labels[i],
-                key="learner_result_attempt_select",
+                key="learner_result_attempt_select_v21_3",
             )
 
             selected_attempt = attempts[selected_attempt_index]
             details = get_attempt_answers(selected_attempt["id"])
-            render_attempt_report(selected_attempt, details, show_learner=False)
+
+            st.success(
+                f"Tentative sélectionnée : {selected_attempt.get('quiz_title', '')} — "
+                f"{len(details)} réponse(s) détaillée(s)."
+            )
+
+            try:
+                render_attempt_report(selected_attempt, details, show_learner=False)
+            except Exception as exc:
+                st.error(f"Erreur pendant l'affichage de la restitution : {exc}")
+                with st.expander("Diagnostic résultat", expanded=True):
+                    st.write("Tentative :", selected_attempt)
+                    st.write("Nombre de réponses détaillées :", len(details))
+                    st.write("Exemple de réponse :", details[0] if details else "Aucune réponse")
 
 
 if st.session_state.role is None:

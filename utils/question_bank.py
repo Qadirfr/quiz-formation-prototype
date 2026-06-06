@@ -501,3 +501,26 @@ def build_quiz_from_bank(
         "selection_mode": mode,
         "learner_email": learner_email,
     }
+
+
+def get_question_bank_source_stats() -> List[Dict[str, Any]]:
+    init_question_bank_db()
+    if _pg():
+        rows = _fetchall("""
+            SELECT COALESCE(NULLIF(source_quiz_title, ''), 'Non renseigné') AS label,
+                   COUNT(*) AS count
+            FROM question_bank
+            WHERE is_active = true
+            GROUP BY COALESCE(NULLIF(source_quiz_title, ''), 'Non renseigné')
+            ORDER BY count DESC, label ASC
+        """)
+    else:
+        rows = _fetchall("""
+            SELECT COALESCE(NULLIF(source_quiz_title, ''), 'Non renseigné') AS label,
+                   COUNT(*) AS count
+            FROM question_bank
+            WHERE is_active = 1
+            GROUP BY COALESCE(NULLIF(source_quiz_title, ''), 'Non renseigné')
+            ORDER BY count DESC, label ASC
+        """)
+    return [{"label": row["label"], "count": row["count"]} for row in rows]

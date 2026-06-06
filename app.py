@@ -50,6 +50,7 @@ from utils.question_bank import (
     add_quiz_to_bank,
     build_quiz_from_bank,
     get_question_bank_stats,
+    get_question_bank_source_stats,
     init_question_bank_db,
     list_bank_difficulties,
     list_bank_domains,
@@ -1328,18 +1329,65 @@ def trainer_app() -> None:
             st.info("Charge ou importe d'abord un quiz pour pouvoir l'ajouter à la banque.")
 
         stats = get_question_bank_stats()
+        source_stats = get_question_bank_source_stats()
+
+        def _bank_stat_table(rows):
+            cleaned = []
+            for row in rows or []:
+                cleaned.append({
+                    "Libellé": row.get("label", ""),
+                    "Nombre": int(row.get("count", 0) or 0),
+                })
+            return cleaned
+
         st.metric("Nombre total de questions actives", stats["total"])
 
-        col_stats1, col_stats2, col_stats3 = st.columns(3)
+        st.markdown("### Par périmètre / formation")
+        st.caption("Ce niveau permet de distinguer les banques : Examen civique, CAIP, audit, sécurité, risques, etc.")
+        st.dataframe(
+            _bank_stat_table(source_stats),
+            width="stretch",
+            hide_index=True,
+            column_config={
+                "Libellé": st.column_config.TextColumn("Libellé", width="large"),
+                "Nombre": st.column_config.NumberColumn("Nombre", width="small"),
+            },
+        )
+
+        col_stats1, col_stats2 = st.columns(2)
         with col_stats1:
-            st.markdown("#### Par domaine")
-            st.dataframe(stats["by_domain"], width="stretch", hide_index=True)
+            st.markdown("### Par domaine")
+            st.dataframe(
+                _bank_stat_table(stats["by_domain"]),
+                width="stretch",
+                hide_index=True,
+                column_config={
+                    "Libellé": st.column_config.TextColumn("Libellé", width="large"),
+                    "Nombre": st.column_config.NumberColumn("Nombre", width="small"),
+                },
+            )
         with col_stats2:
-            st.markdown("#### Par niveau")
-            st.dataframe(stats["by_difficulty"], width="stretch", hide_index=True)
-        with col_stats3:
-            st.markdown("#### Par type")
-            st.dataframe(stats["by_type"], width="stretch", hide_index=True)
+            st.markdown("### Par niveau")
+            st.dataframe(
+                _bank_stat_table(stats["by_difficulty"]),
+                width="stretch",
+                hide_index=True,
+                column_config={
+                    "Libellé": st.column_config.TextColumn("Libellé", width="medium"),
+                    "Nombre": st.column_config.NumberColumn("Nombre", width="small"),
+                },
+            )
+
+        st.markdown("### Par type de question")
+        st.dataframe(
+            _bank_stat_table(stats["by_type"]),
+            width="stretch",
+            hide_index=True,
+            column_config={
+                "Libellé": st.column_config.TextColumn("Libellé", width="medium"),
+                "Nombre": st.column_config.NumberColumn("Nombre", width="small"),
+            },
+        )
 
         st.markdown("### Créer un quiz depuis la banque")
         bank_domains = ["Tous"] + list_bank_domains()

@@ -101,23 +101,8 @@ def init_state() -> None:
 init_state()
 
 
-with st.sidebar.expander("Diagnostic rafraîchissement V20.5", expanded=False):
-    st.caption("Auto-refresh neutralisé. Si la page bouge encore, c'est un rerun provoqué par un widget, pas une actualisation automatique.")
-    if st.button("Rafraîchir manuellement", key="v20_5_refresh_diagnostic_marker"):
-        st.rerun()
 
 
-with st.sidebar.expander("Diagnostic version", expanded=False):
-    st.caption("V20.3 : l'ancien espace apprenant et ses graphiques sont restaurés.")
-    if st.button("Rafraîchir manuellement", key="v20_3_manual_refresh"):
-        st.rerun()
-
-
-
-with st.sidebar.expander("Diagnostic affichage", expanded=False):
-    st.caption("V20.1 : auto-refresh désactivé par défaut.")
-    if st.button("Forcer un rafraîchissement manuel", key="v20_1_manual_sidebar_refresh"):
-        st.rerun()
 
 
 def persist_learner_url_context(session_code: str = "") -> None:

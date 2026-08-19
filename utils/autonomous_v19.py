@@ -12,8 +12,10 @@ from utils.question_bank import (
     get_question_bank_stats,
     list_bank_difficulties,
     list_bank_domains,
+    list_bank_sources,
     select_adaptive_questions,
     select_random_questions,
+    select_random_questions_scoped,
 )
 
 
@@ -382,11 +384,12 @@ def render_v19_autonomous_mode(learner: Optional[Dict[str, Any]]) -> None:
             st.warning("La banque de questions est vide dans la base active.")
             return
 
+        sources = ["Tous"] + list_bank_sources()
         domains = ["Tous"] + list_bank_domains()
         difficulties = ["Tous"] + list_bank_difficulties()
 
         with st.form("v19_start_form", clear_on_submit=False):
-            col1, col2, col3, col4 = st.columns(4)
+            col1, col2, col3 = st.columns(3)
 
             with col1:
                 training_type = st.selectbox("Type", ["Entraînement libre", "Examen autonome"], key="v19_auto_type")
@@ -401,26 +404,37 @@ def render_v19_autonomous_mode(learner: Optional[Dict[str, Any]]) -> None:
                     step=1,
                     key="v19_auto_count",
                 )
-            with col4:
-                domain = st.selectbox("Domaine", domains, key="v19_auto_domain")
 
-            difficulty = st.selectbox("Niveau", difficulties, key="v19_auto_difficulty")
+            col4, col5, col6 = st.columns(3)
+            with col4:
+                source = st.selectbox("Périmètre / formation", sources, key="v19_auto_source")
+            with col5:
+                domain = st.selectbox("Domaine", domains, key="v19_auto_domain")
+            with col6:
+                difficulty = st.selectbox("Niveau", difficulties, key="v19_auto_difficulty")
 
             start_clicked = st.form_submit_button("Démarrer un nouveau quiz autonome V19", type="primary", width="stretch")
 
         if start_clicked:
-            if selection_mode.startswith("Adaptatif"):
+            source_filter = "" if source == "Tous" else source
+            domain_filter = "" if domain == "Tous" else domain
+            difficulty_filter = "" if difficulty == "Tous" else difficulty
+
+            if selection_mode.startswith("Adaptatif") and not source_filter:
                 questions = select_adaptive_questions(
                     learner_email=learner.get("email", ""),
                     limit=int(count),
-                    domain="" if domain == "Tous" else domain,
-                    difficulty="" if difficulty == "Tous" else difficulty,
+                    domain=domain_filter,
+                    difficulty=difficulty_filter,
                 )
             else:
-                questions = select_random_questions(
+                if selection_mode.startswith("Adaptatif") and source_filter:
+                    st.info("Le mode adaptatif est limité au périmètre Tous. Avec un périmètre choisi, le tirage est aléatoire filtré.")
+                questions = select_random_questions_scoped(
                     limit=int(count),
-                    domain="" if domain == "Tous" else domain,
-                    difficulty="" if difficulty == "Tous" else difficulty,
+                    source_quiz_title=source_filter,
+                    domain=domain_filter,
+                    difficulty=difficulty_filter,
                 )
 
             if not questions:

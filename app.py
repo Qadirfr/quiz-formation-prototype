@@ -1812,6 +1812,7 @@ def learner_app() -> None:
             stats = get_question_bank_stats()
             st.caption(f"Banque disponible : {stats['total']} question(s).")
 
+            bank_sources = ["Tous"] + list_bank_sources()
             bank_domains = ["Tous"] + list_bank_domains()
             bank_difficulties = ["Tous"] + list_bank_difficulties()
 
@@ -1832,23 +1833,32 @@ def learner_app() -> None:
                     key="learner_bank_count",
                 )
             with col_l3:
+                learner_bank_source = st.selectbox(
+                    "Périmètre / formation",
+                    bank_sources,
+                    key="learner_bank_source",
+                )
+
+            col_l4, col_l5 = st.columns(2)
+            with col_l4:
                 learner_bank_domain = st.selectbox(
                     "Domaine",
                     bank_domains,
                     key="learner_bank_domain",
                 )
-
-            learner_bank_difficulty = st.selectbox(
-                "Niveau",
-                bank_difficulties,
-                key="learner_bank_difficulty",
-            )
+            with col_l5:
+                learner_bank_difficulty = st.selectbox(
+                    "Niveau",
+                    bank_difficulties,
+                    key="learner_bank_difficulty",
+                )
 
             if st.button("Démarrer depuis la banque", type="primary", width="stretch"):
+                source_filter = "" if learner_bank_source == "Tous" else learner_bank_source
                 domain_filter = "" if learner_bank_domain == "Tous" else learner_bank_domain
                 difficulty_filter = "" if learner_bank_difficulty == "Tous" else learner_bank_difficulty
 
-                if learner_bank_mode == "Adaptatif selon mes erreurs":
+                if learner_bank_mode == "Adaptatif selon mes erreurs" and not source_filter:
                     selected_questions = select_adaptive_questions(
                         learner_email=learner["email"],
                         limit=int(learner_bank_count),
@@ -1858,8 +1868,11 @@ def learner_app() -> None:
                     mode_key = "adaptive"
                     title = f"Entraînement adaptatif - {int(learner_bank_count)} questions"
                 else:
-                    selected_questions = select_random_questions(
+                    if learner_bank_mode == "Adaptatif selon mes erreurs" and source_filter:
+                        st.info("Le mode adaptatif est limité au périmètre Tous. Avec un périmètre choisi, le tirage est aléatoire filtré.")
+                    selected_questions = select_random_questions_scoped(
                         limit=int(learner_bank_count),
+                        source_quiz_title=source_filter,
                         domain=domain_filter,
                         difficulty=difficulty_filter,
                     )

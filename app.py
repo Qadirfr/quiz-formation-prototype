@@ -54,8 +54,10 @@ from utils.question_bank import (
     init_question_bank_db,
     list_bank_difficulties,
     list_bank_domains,
+    list_bank_sources,
     select_adaptive_questions,
     select_random_questions,
+    select_random_questions_scoped,
 )
 
 
@@ -1390,10 +1392,13 @@ def trainer_app() -> None:
         )
 
         st.markdown("### Créer un quiz depuis la banque")
+        bank_sources = ["Tous"] + list_bank_sources()
         bank_domains = ["Tous"] + list_bank_domains()
         bank_difficulties = ["Tous"] + list_bank_difficulties()
 
-        col_b1, col_b2, col_b3 = st.columns(3)
+        col_b0, col_b1, col_b2, col_b3 = st.columns(4)
+        with col_b0:
+            bank_source = st.selectbox("Périmètre / formation", bank_sources, key="trainer_bank_source")
         with col_b1:
             bank_count = st.number_input("Nombre de questions", min_value=1, max_value=200, value=40, step=1)
         with col_b2:
@@ -1414,8 +1419,9 @@ def trainer_app() -> None:
         )
 
         if st.button("Créer un examen aléatoire depuis la banque", width="stretch"):
-            selected_questions = select_random_questions(
+            selected_questions = select_random_questions_scoped(
                 limit=int(bank_count),
+                source_quiz_title="" if bank_source == "Tous" else bank_source,
                 domain="" if bank_domain == "Tous" else bank_domain,
                 difficulty="" if bank_difficulty == "Tous" else bank_difficulty,
             )
@@ -1491,10 +1497,13 @@ def trainer_app() -> None:
         else:
             stats = get_question_bank_stats()
             st.info(f"Banque disponible : {stats['total']} question(s).")
+            bank_sources = ["Tous"] + list_bank_sources()
             bank_domains = ["Tous"] + list_bank_domains()
             bank_difficulties = ["Tous"] + list_bank_difficulties()
 
-            col_s1, col_s2, col_s3 = st.columns(3)
+            col_s0, col_s1, col_s2, col_s3 = st.columns(4)
+            with col_s0:
+                session_bank_source = st.selectbox("Périmètre / formation", bank_sources, key="session_bank_source")
             with col_s1:
                 session_bank_count = st.number_input("Nombre de questions", min_value=1, max_value=200, value=10, step=1, key="session_bank_count")
             with col_s2:
@@ -1503,8 +1512,9 @@ def trainer_app() -> None:
                 session_bank_difficulty = st.selectbox("Niveau", bank_difficulties, key="session_bank_difficulty")
 
             if stats["total"] > 0:
-                questions_for_session = select_random_questions(
+                questions_for_session = select_random_questions_scoped(
                     limit=int(session_bank_count),
+                    source_quiz_title="" if session_bank_source == "Tous" else session_bank_source,
                     domain="" if session_bank_domain == "Tous" else session_bank_domain,
                     difficulty="" if session_bank_difficulty == "Tous" else session_bank_difficulty,
                 )

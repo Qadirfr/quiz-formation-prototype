@@ -524,3 +524,76 @@ def get_question_bank_source_stats() -> List[Dict[str, Any]]:
             ORDER BY count DESC, label ASC
         """)
     return [{"label": row["label"], "count": row["count"]} for row in rows]
+
+def list_bank_sources() -> List[str]:
+    init_question_bank_db()
+    if _pg():
+        rows = _fetchall("""
+            SELECT COALESCE(NULLIF(source_quiz_title, ''), 'Non renseigné') AS label
+            FROM question_bank
+            WHERE is_active = true
+            GROUP BY COALESCE(NULLIF(source_quiz_title, ''), 'Non renseigné')
+            ORDER BY label ASC
+        """)
+    else:
+        rows = _fetchall("""
+            SELECT COALESCE(NULLIF(source_quiz_title, ''), 'Non renseigné') AS label
+            FROM question_bank
+            WHERE is_active = 1
+            GROUP BY COALESCE(NULLIF(source_quiz_title, ''), 'Non renseigné')
+            ORDER BY label ASC
+        """)
+    return [row["label"] for row in rows if row.get("label")]
+
+
+def select_random_questions_scoped(
+    limit: int,
+    domain: str = "",
+    difficulty: str = "",
+    source_quiz_title: str = "",
+    question_type: str = "",
+) -> List[Dict[str, Any]]:
+    init_question_bank_db()
+    placeholder = "%s" if _pg() else "?"
+    active_cond = "is_active = true" if _pg() else "is_active = 1"
+
+    where = [active_cond]
+    params: List[Any] = []
+
+    if domain:
+        where.append(f"domain = {placeholder}")
+        params.append(domain)
+    if difficulty:
+        where.append(f"difficulty = {placeholder}")
+        params.append(difficulty)
+    if source_quiz_title:
+        if source_quiz_title == "Non renseigné":
+            where.append("(source_quiz_title IS NULL OR source_quiz_title = '')")
+        else:
+            where.append(f"source_quiz_title = {placeholder}")
+            params.append(source_quiz_title)
+    if question_type:
+        where.append(f"question_type = {placeholder}")
+        params.append(question_type)
+
+    params.append(int(limit))
+
+    rows = _fetchall(
+        f"""
+        SELECT question_json
+        FROM question_bank
+        WHERE {" AND ".join(where)}
+        ORDER BY RANDOM()
+        LIMIT {placeholder}
+        """,
+        tuple(params),
+    )
+
+    questions: List[Dict[str, Any]] = []
+    for row in rows:
+        raw = row.get("question_json")
+        if isinstance(raw, dict):
+            questions.append(raw)
+        else:
+            questions.append(json.loads(raw))
+    return questions

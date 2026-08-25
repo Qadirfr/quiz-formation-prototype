@@ -54,7 +54,11 @@ from utils.question_bank import (
     init_question_bank_db,
     list_bank_difficulties,
     list_bank_domains,
+    list_bank_question_set_types,
+    list_bank_question_types,
     list_bank_sources,
+    list_bank_subdomains,
+    list_bank_training_scopes,
     select_adaptive_questions,
     select_random_questions,
     select_random_questions_scoped,
@@ -1819,17 +1823,43 @@ def trainer_app() -> None:
 
         st.metric("Nombre total de questions actives", stats["total"])
 
-        st.markdown("### Par périmètre / formation")
-        st.caption("Ce niveau permet de distinguer les banques : Examen civique, CAIP, audit, sécurité, risques, etc.")
-        st.dataframe(
-            _bank_stat_table(source_stats),
-            width="stretch",
-            hide_index=True,
-            column_config={
-                "Libellé": st.column_config.TextColumn("Libellé", width="large"),
-                "Nombre": st.column_config.NumberColumn("Nombre", width="small"),
-            },
-        )
+        # V23 - filtres taxonomie banque
+        st.markdown("### Répartition par taxonomie")
+
+        stat_tax_col1, stat_tax_col2 = st.columns(2)
+        with stat_tax_col1:
+            st.markdown("#### Par formation")
+            st.dataframe(
+                _bank_stat_table(stats.get("by_training_scope", [])),
+                width="stretch",
+                hide_index=True,
+                column_config={
+                    "Libellé": st.column_config.TextColumn("Libellé", width="large"),
+                    "Nombre": st.column_config.NumberColumn("Nombre", width="small"),
+                },
+            )
+        with stat_tax_col2:
+            st.markdown("#### Par type de série")
+            st.dataframe(
+                _bank_stat_table(stats.get("by_question_set_type", [])),
+                width="stretch",
+                hide_index=True,
+                column_config={
+                    "Libellé": st.column_config.TextColumn("Libellé", width="large"),
+                    "Nombre": st.column_config.NumberColumn("Nombre", width="small"),
+                },
+            )
+
+        with st.expander("Détail par quiz source", expanded=False):
+            st.dataframe(
+                _bank_stat_table(source_stats),
+                width="stretch",
+                hide_index=True,
+                column_config={
+                    "Libellé": st.column_config.TextColumn("Libellé", width="large"),
+                    "Nombre": st.column_config.NumberColumn("Nombre", width="small"),
+                },
+            )
 
         col_stats1, col_stats2 = st.columns(2)
         with col_stats1:
@@ -1867,19 +1897,35 @@ def trainer_app() -> None:
         )
 
         st.markdown("### Créer un quiz depuis la banque")
+        st.caption("V23 : sélection par formation, type de série, source, domaine et sous-domaine.")
+
+        bank_training_scopes = ["Tous"] + list_bank_training_scopes()
+        bank_question_set_types = ["Tous"] + list_bank_question_set_types()
         bank_sources = ["Tous"] + list_bank_sources()
         bank_domains = ["Tous"] + list_bank_domains()
+        bank_subdomains = ["Tous"] + list_bank_subdomains()
         bank_difficulties = ["Tous"] + list_bank_difficulties()
+        bank_question_types = ["Tous"] + list_bank_question_types()
 
         col_b0, col_b1, col_b2, col_b3 = st.columns(4)
         with col_b0:
-            bank_source = st.selectbox("Périmètre / formation", bank_sources, key="trainer_bank_source")
+            bank_training_scope = st.selectbox("Formation", bank_training_scopes, key="trainer_bank_training_scope")
         with col_b1:
-            bank_count = st.number_input("Nombre de questions", min_value=1, max_value=200, value=40, step=1)
+            bank_question_set_type = st.selectbox("Type de série", bank_question_set_types, key="trainer_bank_question_set_type")
         with col_b2:
-            bank_domain = st.selectbox("Domaine", bank_domains, key="trainer_bank_domain")
+            bank_source = st.selectbox("Quiz source", bank_sources, key="trainer_bank_source")
         with col_b3:
+            bank_count = st.number_input("Nombre de questions", min_value=1, max_value=200, value=40, step=1)
+
+        col_b4, col_b5, col_b6, col_b7 = st.columns(4)
+        with col_b4:
+            bank_domain = st.selectbox("Domaine", bank_domains, key="trainer_bank_domain")
+        with col_b5:
+            bank_subdomain = st.selectbox("Sous-domaine", bank_subdomains, key="trainer_bank_subdomain")
+        with col_b6:
             bank_difficulty = st.selectbox("Niveau", bank_difficulties, key="trainer_bank_difficulty")
+        with col_b7:
+            bank_question_type = st.selectbox("Type de question", bank_question_types, key="trainer_bank_question_type")
 
         bank_title = st.text_input(
             "Titre du quiz créé",
@@ -1896,9 +1942,13 @@ def trainer_app() -> None:
         if st.button("Créer un examen aléatoire depuis la banque", width="stretch"):
             selected_questions = select_random_questions_scoped(
                 limit=int(bank_count),
+                training_scope="" if bank_training_scope == "Tous" else bank_training_scope,
+                question_set_type="" if bank_question_set_type == "Tous" else bank_question_set_type,
                 source_quiz_title="" if bank_source == "Tous" else bank_source,
                 domain="" if bank_domain == "Tous" else bank_domain,
+                subdomain="" if bank_subdomain == "Tous" else bank_subdomain,
                 difficulty="" if bank_difficulty == "Tous" else bank_difficulty,
+                question_type="" if bank_question_type == "Tous" else bank_question_type,
             )
 
             if not selected_questions:
@@ -1972,26 +2022,45 @@ def trainer_app() -> None:
         else:
             stats = get_question_bank_stats()
             st.info(f"Banque disponible : {stats['total']} question(s).")
-            bank_sources = ["Tous"] + list_bank_sources()
-            bank_domains = ["Tous"] + list_bank_domains()
-            bank_difficulties = ["Tous"] + list_bank_difficulties()
+
+            session_training_scopes = ["Tous"] + list_bank_training_scopes()
+            session_question_set_types = ["Tous"] + list_bank_question_set_types()
+            session_bank_sources = ["Tous"] + list_bank_sources()
+            session_bank_domains = ["Tous"] + list_bank_domains()
+            session_bank_subdomains = ["Tous"] + list_bank_subdomains()
+            session_bank_difficulties = ["Tous"] + list_bank_difficulties()
+            session_bank_question_types = ["Tous"] + list_bank_question_types()
 
             col_s0, col_s1, col_s2, col_s3 = st.columns(4)
             with col_s0:
-                session_bank_source = st.selectbox("Périmètre / formation", bank_sources, key="session_bank_source")
+                session_bank_training_scope = st.selectbox("Formation", session_training_scopes, key="session_bank_training_scope")
             with col_s1:
-                session_bank_count = st.number_input("Nombre de questions", min_value=1, max_value=200, value=10, step=1, key="session_bank_count")
+                session_bank_question_set_type = st.selectbox("Type de série", session_question_set_types, key="session_bank_question_set_type")
             with col_s2:
-                session_bank_domain = st.selectbox("Domaine", bank_domains, key="session_bank_domain")
+                session_bank_source = st.selectbox("Quiz source", session_bank_sources, key="session_bank_source")
             with col_s3:
-                session_bank_difficulty = st.selectbox("Niveau", bank_difficulties, key="session_bank_difficulty")
+                session_bank_count = st.number_input("Nombre de questions", min_value=1, max_value=200, value=10, step=1, key="session_bank_count")
+
+            col_s4, col_s5, col_s6, col_s7 = st.columns(4)
+            with col_s4:
+                session_bank_domain = st.selectbox("Domaine", session_bank_domains, key="session_bank_domain")
+            with col_s5:
+                session_bank_subdomain = st.selectbox("Sous-domaine", session_bank_subdomains, key="session_bank_subdomain")
+            with col_s6:
+                session_bank_difficulty = st.selectbox("Niveau", session_bank_difficulties, key="session_bank_difficulty")
+            with col_s7:
+                session_bank_question_type = st.selectbox("Type de question", session_bank_question_types, key="session_bank_question_type")
 
             if stats["total"] > 0:
                 questions_for_session = select_random_questions_scoped(
                     limit=int(session_bank_count),
+                    training_scope="" if session_bank_training_scope == "Tous" else session_bank_training_scope,
+                    question_set_type="" if session_bank_question_set_type == "Tous" else session_bank_question_set_type,
                     source_quiz_title="" if session_bank_source == "Tous" else session_bank_source,
                     domain="" if session_bank_domain == "Tous" else session_bank_domain,
+                    subdomain="" if session_bank_subdomain == "Tous" else session_bank_subdomain,
                     difficulty="" if session_bank_difficulty == "Tous" else session_bank_difficulty,
+                    question_type="" if session_bank_question_type == "Tous" else session_bank_question_type,
                 )
                 source_label = "question_bank_random"
                 st.info(f"{len(questions_for_session)} question(s) seront sélectionnées.")
@@ -2230,11 +2299,8 @@ def learner_app() -> None:
     if learner_page == "Passer un quiz / s’entraîner":
         st.subheader("Choisir et passer un quiz")
 
-        try:
-            from utils.autonomous_v19 import render_v19_autonomous_mode
-            render_v19_autonomous_mode(st.session_state.get('learner'))
-        except Exception as exc:
-            st.error(f'Mode autonome V19 indisponible : {exc}')
+        # V23 : ancien mode autonome V19 d?sactiv?.
+        # Le bloc d'entra?nement banque V23 utilise d?sormais training_scope et question_set_type.
 
 
         with st.expander("Rejoindre une session dirigée par le formateur", expanded=True):
@@ -2336,8 +2402,10 @@ def learner_app() -> None:
             stats = get_question_bank_stats()
             st.caption(f"Banque disponible : {stats['total']} question(s).")
 
-            bank_sources = ["Tous"] + list_bank_sources()
+            bank_training_scopes = ["Tous"] + list_bank_training_scopes()
+            bank_question_set_types = ["Tous"] + list_bank_question_set_types()
             bank_domains = ["Tous"] + list_bank_domains()
+            bank_subdomains = ["Tous"] + list_bank_subdomains()
             bank_difficulties = ["Tous"] + list_bank_difficulties()
 
             col_l1, col_l2, col_l3 = st.columns(3)
@@ -2351,26 +2419,38 @@ def learner_app() -> None:
                 learner_bank_count = st.number_input(
                     "Nombre de questions",
                     min_value=1,
-                    max_value=200,
-                    value=40,
+                    max_value=100,
+                    value=20,
                     step=1,
                     key="learner_bank_count",
                 )
             with col_l3:
-                learner_bank_source = st.selectbox(
-                    "Périmètre / formation",
-                    bank_sources,
-                    key="learner_bank_source",
+                learner_bank_training_scope = st.selectbox(
+                    "Formation",
+                    bank_training_scopes,
+                    key="learner_bank_training_scope",
                 )
 
-            col_l4, col_l5 = st.columns(2)
+            col_l4, col_l5, col_l6, col_l7 = st.columns(4)
             with col_l4:
+                learner_bank_question_set_type = st.selectbox(
+                    "Type d'entraînement",
+                    bank_question_set_types,
+                    key="learner_bank_question_set_type",
+                )
+            with col_l5:
                 learner_bank_domain = st.selectbox(
                     "Domaine",
                     bank_domains,
                     key="learner_bank_domain",
                 )
-            with col_l5:
+            with col_l6:
+                learner_bank_subdomain = st.selectbox(
+                    "Sous-domaine",
+                    bank_subdomains,
+                    key="learner_bank_subdomain",
+                )
+            with col_l7:
                 learner_bank_difficulty = st.selectbox(
                     "Niveau",
                     bank_difficulties,
@@ -2378,11 +2458,19 @@ def learner_app() -> None:
                 )
 
             if st.button("Démarrer depuis la banque", type="primary", width="stretch"):
-                source_filter = "" if learner_bank_source == "Tous" else learner_bank_source
+                training_scope_filter = "" if learner_bank_training_scope == "Tous" else learner_bank_training_scope
+                question_set_type_filter = "" if learner_bank_question_set_type == "Tous" else learner_bank_question_set_type
                 domain_filter = "" if learner_bank_domain == "Tous" else learner_bank_domain
+                subdomain_filter = "" if learner_bank_subdomain == "Tous" else learner_bank_subdomain
                 difficulty_filter = "" if learner_bank_difficulty == "Tous" else learner_bank_difficulty
 
-                if learner_bank_mode == "Adaptatif selon mes erreurs" and not source_filter:
+                has_scope_filter = any([
+                    training_scope_filter,
+                    question_set_type_filter,
+                    subdomain_filter,
+                ])
+
+                if learner_bank_mode == "Adaptatif selon mes erreurs" and not has_scope_filter:
                     selected_questions = select_adaptive_questions(
                         learner_email=learner["email"],
                         limit=int(learner_bank_count),
@@ -2392,16 +2480,18 @@ def learner_app() -> None:
                     mode_key = "adaptive"
                     title = f"Entraînement adaptatif - {int(learner_bank_count)} questions"
                 else:
-                    if learner_bank_mode == "Adaptatif selon mes erreurs" and source_filter:
-                        st.info("Le mode adaptatif est limité au périmètre Tous. Avec un périmètre choisi, le tirage est aléatoire filtré.")
+                    if learner_bank_mode == "Adaptatif selon mes erreurs" and has_scope_filter:
+                        st.info("Le mode adaptatif est limité aux filtres Domaine/Niveau. Avec une formation, un type ou un sous-domaine choisi, le tirage est aléatoire filtré.")
                     selected_questions = select_random_questions_scoped(
                         limit=int(learner_bank_count),
-                        source_quiz_title=source_filter,
+                        training_scope=training_scope_filter,
+                        question_set_type=question_set_type_filter,
                         domain=domain_filter,
+                        subdomain=subdomain_filter,
                         difficulty=difficulty_filter,
                     )
                     mode_key = "random"
-                    title = f"Examen aléatoire - {int(learner_bank_count)} questions"
+                    title = f"Entraînement depuis la banque - {int(learner_bank_count)} questions"
 
                 if not selected_questions:
                     st.warning("Aucune question disponible dans la banque avec ces critères.")

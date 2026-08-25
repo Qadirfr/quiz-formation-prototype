@@ -67,6 +67,452 @@ st.set_page_config(
     layout="wide",
 )
 
+
+
+
+
+
+
+
+
+
+
+
+# --- V22.13 QA SERVICES CLEAN PATCH START ---
+def apply_v22_13_qa_theme() -> None:
+    st.markdown(
+        """
+<style>
+:root {
+    --qa-green-deep: #06472f;
+    --qa-green-main: #126a47;
+    --qa-green-mid: #227a55;
+    --qa-green-light: #e6f5ec;
+    --qa-green-mint: #f4fbf6;
+    --qa-ivory: #fbfaf4;
+    --qa-gold: #d8b15f;
+    --qa-text: #20362b;
+    --qa-muted: #607269;
+    --qa-border: #cfe6d7;
+    --qa-shadow: 0 14px 34px rgba(6, 71, 47, 0.08);
+    --qa-soft-shadow: 0 8px 20px rgba(6, 71, 47, 0.06);
+}
+
+.stApp {
+    background:
+        radial-gradient(circle at top left, rgba(230,245,236,0.92), transparent 34rem),
+        radial-gradient(circle at bottom right, rgba(244,251,246,0.92), transparent 30rem),
+        linear-gradient(135deg, #ffffff 0%, var(--qa-ivory) 100%) !important;
+    color: var(--qa-text);
+}
+
+[data-testid="stHeader"] {
+    background: rgba(251,250,244,0.92) !important;
+    border-bottom: 1px solid rgba(207,230,215,0.75);
+    backdrop-filter: blur(10px);
+}
+
+.block-container {
+    max-width: 1340px !important;
+    padding-top: 1.2rem !important;
+    padding-left: 1.6rem !important;
+    padding-right: 1.6rem !important;
+    padding-bottom: 3rem !important;
+}
+
+/* Sidebar */
+section[data-testid="stSidebar"] {
+    display: block !important;
+    visibility: visible !important;
+    background:
+        radial-gradient(circle at top, rgba(255,255,255,0.14), transparent 12rem),
+        linear-gradient(180deg, #06472f 0%, #053821 100%) !important;
+    border-right: 1px solid rgba(207,230,215,0.35) !important;
+}
+
+section[data-testid="stSidebar"] h1,
+section[data-testid="stSidebar"] h2,
+section[data-testid="stSidebar"] h3,
+section[data-testid="stSidebar"] h4,
+section[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p,
+section[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] li,
+section[data-testid="stSidebar"] [data-testid="stCaptionContainer"],
+section[data-testid="stSidebar"] .stMarkdown {
+    color: #f7fbf6 !important;
+}
+
+section[data-testid="stSidebar"] h1,
+section[data-testid="stSidebar"] h2,
+section[data-testid="stSidebar"] h3 {
+    color: #fff5d7 !important;
+    text-shadow: 0 1px 1px rgba(0,0,0,0.18);
+}
+
+section[data-testid="stSidebar"] label,
+section[data-testid="stSidebar"] label *,
+section[data-testid="stSidebar"] [data-testid="stWidgetLabel"],
+section[data-testid="stSidebar"] [data-testid="stWidgetLabel"] *,
+section[data-testid="stSidebar"] [data-testid="stSlider"] label,
+section[data-testid="stSidebar"] [data-testid="stSlider"] label * {
+    color: #eef8f1 !important;
+    font-weight: 760 !important;
+    opacity: 1 !important;
+}
+
+section[data-testid="stSidebar"] div[data-baseweb="select"] > div,
+section[data-testid="stSidebar"] div[data-baseweb="input"] > div,
+section[data-testid="stSidebar"] div[data-baseweb="textarea"] textarea,
+section[data-testid="stSidebar"] input,
+section[data-testid="stSidebar"] textarea {
+    background: rgba(255,255,255,0.98) !important;
+    border: 1px solid rgba(207,230,215,0.85) !important;
+    border-radius: 14px !important;
+    color: #20362b !important;
+}
+
+section[data-testid="stSidebar"] div[data-baseweb="select"] > div *,
+section[data-testid="stSidebar"] div[data-baseweb="input"] > div *,
+section[data-testid="stSidebar"] input *,
+section[data-testid="stSidebar"] textarea * {
+    color: #20362b !important;
+}
+
+section[data-testid="stSidebar"] [data-baseweb="tag"] {
+    background: #e6f5ec !important;
+    border: 1px solid #a8cbb7 !important;
+    color: #06472f !important;
+    border-radius: 999px !important;
+}
+
+section[data-testid="stSidebar"] [data-baseweb="tag"] *,
+section[data-testid="stSidebar"] [data-baseweb="tag"] span {
+    color: #06472f !important;
+    font-weight: 760 !important;
+}
+
+section[data-testid="stSidebar"] div.stButton > button,
+section[data-testid="stSidebar"] button[data-testid="stBaseButton-secondary"] {
+    background: rgba(255,255,255,0.96) !important;
+    border: 1px solid rgba(207,230,215,0.90) !important;
+    color: #06472f !important;
+    border-radius: 999px !important;
+    box-shadow: 0 10px 22px rgba(0,0,0,0.14) !important;
+    font-weight: 780 !important;
+}
+
+section[data-testid="stSidebar"] div.stButton > button *,
+section[data-testid="stSidebar"] button[data-testid="stBaseButton-secondary"] * {
+    color: #06472f !important;
+    background: transparent !important;
+}
+
+section[data-testid="stSidebar"] [data-testid="stSlider"] * {
+    color: #eef8f1 !important;
+}
+
+section[data-testid="stSidebar"] [data-testid="stSlider"] div[role="slider"] {
+    background: #fff5d7 !important;
+    border-color: #fff5d7 !important;
+}
+
+section[data-testid="stSidebar"] hr {
+    border-color: rgba(255,255,255,0.18) !important;
+}
+
+/* Radio de navigation dans sidebar : lisible et utile */
+section[data-testid="stSidebar"] div[role="radiogroup"] label {
+    background: rgba(255,255,255,0.96) !important;
+    border: 1px solid rgba(207,230,215,0.90) !important;
+    border-radius: 18px !important;
+    padding: 0.62rem 0.78rem !important;
+    margin-bottom: 0.5rem !important;
+    box-shadow: 0 10px 22px rgba(0,0,0,0.12) !important;
+}
+
+section[data-testid="stSidebar"] div[role="radiogroup"] label *,
+section[data-testid="stSidebar"] div[role="radiogroup"] label p,
+section[data-testid="stSidebar"] div[role="radiogroup"] label span {
+    color: #06472f !important;
+    font-weight: 780 !important;
+}
+
+section[data-testid="stSidebar"] div[role="radiogroup"] label:has(input:checked) {
+    background: #fff5d7 !important;
+    border-color: #d8b15f !important;
+}
+
+/* Titres */
+h1, h2, h3 {
+    color: var(--qa-green-deep) !important;
+    letter-spacing: -0.025em;
+}
+
+h1 {
+    font-size: clamp(2.5rem, 5vw, 4.5rem) !important;
+    font-weight: 900 !important;
+    line-height: 0.96 !important;
+}
+
+h2 { font-weight: 850 !important; }
+h3 { font-weight: 800 !important; }
+
+[data-testid="stCaptionContainer"] {
+    color: var(--qa-muted) !important;
+    font-size: 1.02rem !important;
+}
+
+[data-testid="stMarkdownContainer"] p,
+[data-testid="stMarkdownContainer"] li {
+    color: var(--qa-text);
+    line-height: 1.55;
+}
+
+/* Containers */
+[data-testid="stVerticalBlockBorderWrapper"] {
+    border-color: var(--qa-border) !important;
+    border-radius: 24px !important;
+    background:
+        radial-gradient(circle at top right, rgba(216,177,95,0.08), transparent 13rem),
+        rgba(255,255,255,0.96) !important;
+    box-shadow: var(--qa-shadow);
+}
+
+[data-testid="stExpander"] details {
+    border-radius: 20px !important;
+    border: 1px solid var(--qa-border) !important;
+    background: rgba(255,255,255,0.96) !important;
+    box-shadow: var(--qa-soft-shadow) !important;
+    overflow: hidden;
+}
+
+[data-testid="stExpander"] summary {
+    color: var(--qa-green-deep) !important;
+    font-weight: 820 !important;
+    padding: 0.95rem 1rem !important;
+}
+
+div[data-testid="stForm"] {
+    border-radius: 22px !important;
+    border: 1px solid var(--qa-border) !important;
+    background: rgba(255,255,255,0.96) !important;
+    box-shadow: var(--qa-soft-shadow);
+    padding: 1rem !important;
+}
+
+/* Boutons */
+div.stButton > button,
+div.stDownloadButton > button,
+button[data-testid="stBaseButton-secondary"] {
+    border-radius: 999px !important;
+    border: 1px solid var(--qa-border) !important;
+    color: var(--qa-green-deep) !important;
+    background: rgba(255,255,255,0.96) !important;
+    font-weight: 760 !important;
+    min-height: 2.65rem;
+    box-shadow: var(--qa-soft-shadow);
+    transition: all 0.16s ease-in-out;
+}
+
+div.stButton > button:hover,
+div.stDownloadButton > button:hover,
+button[data-testid="stBaseButton-secondary"]:hover {
+    border-color: var(--qa-green-main) !important;
+    color: var(--qa-green-deep) !important;
+    transform: translateY(-1px);
+    box-shadow: 0 12px 28px rgba(6,71,47,0.12);
+}
+
+div.stButton > button[kind="primary"],
+div[data-testid="stButton"] button[kind="primary"],
+button[data-testid="stBaseButton-primary"],
+button[kind="primary"] {
+    background: linear-gradient(135deg, var(--qa-green-deep), var(--qa-green-main)) !important;
+    border-color: var(--qa-green-deep) !important;
+    color: #ffffff !important;
+    border-radius: 999px !important;
+    box-shadow: 0 12px 26px rgba(6,71,47,0.20);
+}
+
+div.stButton > button[kind="primary"] *,
+div[data-testid="stButton"] button[kind="primary"] *,
+button[data-testid="stBaseButton-primary"] *,
+button[kind="primary"] *,
+div.stButton > button[kind="primary"] p,
+div[data-testid="stButton"] button[kind="primary"] p,
+button[data-testid="stBaseButton-primary"] p,
+button[kind="primary"] p,
+div.stButton > button[kind="primary"] span,
+div[data-testid="stButton"] button[kind="primary"] span,
+button[data-testid="stBaseButton-primary"] span,
+button[kind="primary"] span {
+    color: #ffffff !important;
+    background: transparent !important;
+}
+
+div[data-baseweb="select"] > div,
+div[data-baseweb="input"] > div,
+textarea,
+input {
+    border-radius: 14px !important;
+    border-color: var(--qa-border) !important;
+    background-color: rgba(255,255,255,0.98) !important;
+}
+
+label, [data-testid="stWidgetLabel"] {
+    color: var(--qa-green-deep) !important;
+    font-weight: 760 !important;
+}
+
+div[role="radiogroup"] {
+    gap: 0.35rem;
+}
+
+div[role="radiogroup"] label {
+    border: 1px solid var(--qa-border);
+    border-radius: 999px;
+    padding: 0.48rem 0.72rem;
+    background: rgba(255,255,255,0.92);
+    box-shadow: 0 6px 16px rgba(6,71,47,0.04);
+    transition: all 0.16s ease-in-out;
+}
+
+div[role="radiogroup"] label:has(input:checked) {
+    border-color: var(--qa-green-main);
+    background: var(--qa-green-light);
+    box-shadow: 0 8px 20px rgba(6,71,47,0.08);
+}
+
+input[type="radio"] {
+    accent-color: var(--qa-green-main) !important;
+}
+
+[data-testid="stMetric"] {
+    background: rgba(255,255,255,0.96);
+    border: 1px solid var(--qa-border);
+    border-radius: 18px;
+    padding: 0.78rem 0.9rem;
+    box-shadow: var(--qa-soft-shadow);
+}
+
+[data-testid="stMetricValue"] {
+    color: var(--qa-green-deep) !important;
+    font-weight: 850 !important;
+}
+
+[data-testid="stAlert"] {
+    border-radius: 18px !important;
+    border: 1px solid var(--qa-border) !important;
+    box-shadow: var(--qa-soft-shadow);
+}
+
+[data-testid="stProgress"] > div > div > div {
+    background: linear-gradient(90deg, var(--qa-green-deep), var(--qa-green-main)) !important;
+}
+
+[data-testid="stDataFrame"],
+[data-testid="stTable"] {
+    border-radius: 18px;
+    overflow: hidden;
+    box-shadow: var(--qa-soft-shadow);
+}
+
+hr { border-color: rgba(207,230,215,0.78); }
+
+div[data-baseweb="popover"] * {
+    color: #20362b !important;
+}
+
+div[data-baseweb="menu"] {
+    background: #ffffff !important;
+    border: 1px solid #cfe6d7 !important;
+}
+
+div[data-baseweb="menu"] li,
+div[data-baseweb="menu"] div {
+    color: #20362b !important;
+}
+
+@media (max-width: 760px) {
+    .block-container {
+        padding-left: 1rem !important;
+        padding-right: 1rem !important;
+    }
+    h1 { font-size: 2.4rem !important; }
+}
+</style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+apply_v22_13_qa_theme()
+# --- V22.13 QA SERVICES CLEAN PATCH END ---
+
+def render_v22_13_login_home_intro() -> None:
+    apply_v22_13_qa_theme()
+
+    top_left, top_right = st.columns([0.72, 0.28])
+    with top_left:
+        st.title("Plateforme locale de quiz")
+        st.caption("Choisis ton espace de connexion et retrouve tes parcours de formation.")
+    with top_right:
+        st.image("assets/qa_services_logo_v22_13.svg", width=230)
+
+    hero_left, hero_right = st.columns([0.45, 0.55])
+    with hero_left:
+        with st.container(border=True):
+            st.markdown("## QA Services")
+            st.markdown("### Clarté • Pratique • Excellence")
+            st.write(
+                "Une plateforme d’entraînement pour structurer les apprentissages, "
+                "mesurer la progression et accompagner la montée en compétence."
+            )
+            st.success("Progresser avec méthode, viser l’excellence.")
+    with hero_right:
+        with st.container(border=True):
+            st.image("assets/qa_services_excellence_v22_13.svg", use_container_width=True)
+
+    col_a, col_b, col_c = st.columns(3)
+    with col_a:
+        st.metric("Clarté", "Comprendre")
+    with col_b:
+        st.metric("Pratique", "S’entraîner")
+    with col_c:
+        st.metric("Excellence", "Maîtriser")
+
+def render_v22_12_login_home() -> None:
+    apply_v22_12_qa_services_theme()
+
+    top_left, top_right = st.columns([0.72, 0.28])
+    with top_left:
+        render_v22_12_login_home()
+        st.caption("Choisis ton espace de connexion et retrouve tes parcours de formation.")
+    with top_right:
+        st.image("assets/qa_services_logo_v22_12.svg", width=230)
+
+    hero_left, hero_right = st.columns([0.45, 0.55])
+    with hero_left:
+        with st.container(border=True):
+            st.markdown("## QA Services")
+            st.markdown("### Clarté • Pratique • Excellence")
+            st.write(
+                "Une plateforme d’entraînement pour structurer les apprentissages, "
+                "mesurer la progression et accompagner la montée en compétence."
+            )
+            st.success("Progresser avec méthode, viser l’excellence.")
+
+    with hero_right:
+        with st.container(border=True):
+            st.image("assets/qa_services_excellence_v22_12.svg", use_container_width=True)
+
+    col_a, col_b, col_c = st.columns(3)
+    with col_a:
+        st.metric("Clarté", "Comprendre")
+    with col_b:
+        st.metric("Pratique", "S’entraîner")
+    with col_c:
+        st.metric("Excellence", "Maîtriser")
+
 init_db()
 init_learner_db()
 init_question_bank_db()
@@ -165,10 +611,39 @@ restore_learner_from_url_context()
 
 
 def logout() -> None:
-    for key in ["role", "learner", "active_attempt_id", "active_quiz_for_test", "last_completed_attempt_id"]:
-        st.session_state[key] = None
-    st.rerun()
+    """Déconnexion robuste.
 
+    Ne modifie pas learner_page_v21_4, car cette clé appartient au widget
+    st.radio de navigation apprenant. Streamlit interdit de modifier une clé
+    de widget après son instanciation dans le même run.
+    """
+    try:
+        st.query_params.clear()
+    except Exception:
+        try:
+            st.experimental_set_query_params()
+        except Exception:
+            pass
+
+    keys_to_clear = [
+        "role",
+        "learner",
+        "trainer_authenticated",
+        "user_role",
+        "active_attempt_id",
+        "active_quiz_for_test",
+        "last_completed_attempt_id",
+        "active_directed_session_id",
+        "active_directed_participant_id",
+    ]
+
+    for key in keys_to_clear:
+        try:
+            st.session_state[key] = None
+        except Exception:
+            pass
+
+    st.rerun()
 
 def normalize_text(value: Any) -> str:
     text = "" if value is None else str(value)
@@ -761,8 +1236,8 @@ def render_attempt_report(attempt: Dict[str, Any], details: List[Dict[str, Any]]
                 st.write(f"**Piste de révision :** {answer['remediation']}")
 
 def login_screen() -> None:
-    st.title("Plateforme locale de quiz")
-    st.caption("Choisis ton espace de connexion.")
+    render_v22_13_login_home_intro()
+
 
     col_learner, col_trainer = st.columns(2)
 
@@ -1657,51 +2132,100 @@ def trainer_app() -> None:
 
 def learner_app() -> None:
     learner = st.session_state.learner
-    st.title("Espace apprenant")
-    st.markdown("""
-    <style id="v21_2_learner_fullwidth_css">
-    section[data-testid="stSidebar"] {
-        display: none !important;
-    }
-    .block-container {
-        max-width: none !important;
-        width: 100% !important;
-        padding-left: 1.1rem !important;
-        padding-right: 1.1rem !important;
-        padding-top: 0.8rem !important;
-    }
-    div[data-testid="stExpander"] {
-        border-radius: 16px !important;
-        overflow: hidden !important;
-    }
-    div[data-testid="stForm"] {
-        border: 2px solid #bfdbfe !important;
-        border-radius: 18px !important;
-        padding: 1rem !important;
-        background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%) !important;
-    }
-    </style>
-    """, unsafe_allow_html=True)
-
-    user_cols = st.columns([3, 1])
-    with user_cols[0]:
-        st.success(
-            f"Connecté : {learner.get('name', '-')}"
-            f" | Identifiant : {learner.get('email', '-')}"
-            f" | Groupe : {learner.get('group_name') or '-'}"
-        )
-    with user_cols[1]:
-        st.button("Se déconnecter", on_click=logout, width="stretch", key="v21_2_logout_top")
-
-
-
-    learner_page = st.radio(
-        "Navigation apprenant",
-        ["Passer un quiz / s’entraîner", "Mes résultats et restitutions"],
-        horizontal=True,
-        label_visibility="collapsed",
-        key="learner_page_v21_4",
+    learner_name = (
+        learner.get("name")
+        or learner.get("full_name")
+        or learner.get("learner_name")
+        or learner.get("prenom")
+        or learner.get("first_name")
+        or "Apprenant"
     )
+    learner_identifier = (
+        learner.get("email")
+        or learner.get("identifier")
+        or learner.get("login")
+        or learner.get("id")
+        or "-"
+    )
+    learner_group = (
+        learner.get("group_name")
+        or learner.get("group")
+        or learner.get("session_code")
+        or "-"
+    )
+
+    if st.session_state.get("learner_page_v21_4") not in [
+        "Passer un quiz / s’entraîner",
+        "Mes résultats et restitutions",
+    ]:
+        st.session_state["learner_page_v21_4"] = "Passer un quiz / s’entraîner"
+
+    with st.sidebar:
+        st.image("assets/qa_services_logo_v22_13.svg", use_container_width=True)
+        st.markdown("## QA Services")
+        st.caption("Clarté • Pratique • Excellence")
+        st.divider()
+
+        learner_page = st.radio(
+            "Navigation",
+            ["Passer un quiz / s’entraîner", "Mes résultats et restitutions"],
+            key="learner_page_v21_4",
+        )
+
+        st.divider()
+        if st.button("Déconnexion", key="qa_v22_13_nav_logout", width="stretch"):
+            logout()
+
+    qa_progress_attempts = []
+    try:
+        qa_progress_attempts = get_attempts_for_learner_email(learner_identifier, limit=100) if learner_identifier != "-" else []
+    except Exception:
+        qa_progress_attempts = []
+
+    qa_percentages = []
+    for qa_attempt in qa_progress_attempts or []:
+        try:
+            qa_percentages.append(float(qa_attempt.get("percentage") or 0))
+        except Exception:
+            pass
+
+    qa_best_score = "—" if not qa_percentages else f"{round(max(qa_percentages), 1)}%"
+    qa_last_score = "—" if not qa_percentages else f"{round(qa_percentages[0], 1)}%"
+
+    qa_top_left, qa_top_right = st.columns([0.72, 0.28])
+    with qa_top_left:
+        st.title("Espace apprenant")
+        st.caption("Votre espace dédié pour apprendre, vous entraîner et progresser.")
+    with qa_top_right:
+        st.image("assets/qa_services_logo_v22_13.svg", width=210)
+
+    qa_hero_left, qa_hero_right = st.columns([0.42, 0.58])
+    with qa_hero_left:
+        with st.container(border=True):
+            st.markdown(f"## Bienvenue, {learner_name}")
+            st.markdown(f"**Identifiant :** {learner_identifier}")
+            st.markdown(f"**Groupe :** {learner_group}")
+            st.success("Progresser avec méthode, viser l’excellence.")
+
+    with qa_hero_right:
+        with st.container(border=True):
+            st.image("assets/qa_services_excellence_v22_13.svg", use_container_width=True)
+
+    qa_method_1, qa_method_2, qa_method_3 = st.columns(3)
+    with qa_method_1:
+        st.metric("Clarté", "Comprendre")
+    with qa_method_2:
+        st.metric("Pratique", "S’entraîner")
+    with qa_method_3:
+        st.metric("Excellence", "Maîtriser")
+
+    qa_status_left, qa_status_right = st.columns([0.74, 0.26])
+    with qa_status_left:
+        st.info(f"Connecté : {learner_name} | Identifiant : {learner_identifier} | Groupe : {learner_group}")
+    with qa_status_right:
+        if st.button("Se déconnecter", width="stretch", key="qa_v22_13_logout_top"):
+            logout()
+
 
     if learner_page == "Passer un quiz / s’entraîner":
         st.subheader("Choisir et passer un quiz")

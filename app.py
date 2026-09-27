@@ -517,10 +517,15 @@ def render_v22_12_login_home() -> None:
     with col_c:
         st.metric("Excellence", "Maîtriser")
 
-init_db()
-init_learner_db()
-init_question_bank_db()
-init_session_db()
+@st.cache_resource(show_spinner=False)
+def _v23_1_init_databases_once():
+    init_db()
+    init_learner_db()
+    init_question_bank_db()
+    init_session_db()
+    return True
+
+_v23_1_init_databases_once()
 
 LEARNER_ACCESS_CODE = os.environ.get("QUIZ_LEARNER_CODE", "CIVIQUE2026")
 TRAINER_PASSWORD = os.environ.get("QUIZ_TRAINER_PASSWORD", "formateur123")

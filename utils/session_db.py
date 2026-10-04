@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import random
 import string
+from functools import lru_cache
 from typing import Any, Dict, List, Optional
 
 from utils.db_runtime import get_connection, get_database_mode
@@ -43,6 +44,7 @@ def _fetchall(sql: str, params: tuple = ()) -> List[Dict[str, Any]]:
         return [_row(r) for r in rows]
 
 
+@lru_cache(maxsize=1)
 def init_session_db() -> None:
     if _pg():
         with get_connection() as conn:

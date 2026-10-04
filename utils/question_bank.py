@@ -881,6 +881,7 @@ def infer_question_set_type_from_bank(source_quiz_title=""):
     return "Autre"
 
 
+@lru_cache(maxsize=1)
 def init_question_bank_db() -> None:
     """Initialise question_bank avec la taxonomie V23.
 

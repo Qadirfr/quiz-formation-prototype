@@ -5,6 +5,7 @@ import math
 import json
 import os
 import re
+import time
 import unicodedata
 from typing import Any, Dict, List, Optional
 
@@ -2665,8 +2666,12 @@ if st.session_state.role is None:
     st.stop()
 
 if st.session_state.role == "trainer":
+    _perf_started = time.perf_counter()
     trainer_app()
+    print(f"[PERF][APP_RENDER] role=trainer total={time.perf_counter() - _perf_started:.3f}s", flush=True)
 elif st.session_state.role == "learner":
+    _perf_started = time.perf_counter()
     learner_app()
+    print(f"[PERF][APP_RENDER] role=learner total={time.perf_counter() - _perf_started:.3f}s", flush=True)
 else:
     logout()

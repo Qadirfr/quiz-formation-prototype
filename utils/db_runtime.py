@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import inspect
 import os
 import sqlite3
+import time
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -62,7 +64,26 @@ def get_postgres_connection():
         from psycopg.rows import dict_row
     except ImportError as exc:
         raise RuntimeError("psycopg n'est pas installé. Lance : pip install -r requirements.txt") from exc
-    return psycopg.connect(database_url, row_factory=dict_row)
+
+    direct_caller = "unknown"
+    parent_caller = "unknown"
+    frame = inspect.currentframe()
+    try:
+        if frame and frame.f_back and frame.f_back.f_back:
+            direct_caller = frame.f_back.f_back.f_code.co_name
+            if frame.f_back.f_back.f_back:
+                parent_caller = frame.f_back.f_back.f_back.f_code.co_name
+    finally:
+        del frame
+
+    started = time.perf_counter()
+    conn = psycopg.connect(database_url, row_factory=dict_row)
+    elapsed = time.perf_counter() - started
+    print(
+        f"[PERF][DB_CONNECT] {elapsed:.3f}s direct={direct_caller} parent={parent_caller}",
+        flush=True,
+    )
+    return conn
 
 
 def get_connection():

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from functools import lru_cache
 from typing import Any, Dict, List, Optional
 
 from utils.db_runtime import get_connection, get_database_mode
@@ -54,6 +55,7 @@ def init_quiz_db() -> None:
     init_quiz_history_db()
 
 
+@lru_cache(maxsize=1)
 def init_quiz_history_db() -> None:
     if _pg():
         with get_connection() as conn:

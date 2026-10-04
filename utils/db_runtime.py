@@ -4,6 +4,7 @@ import inspect
 import os
 import sqlite3
 import time
+from contextlib import contextmanager
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -56,35 +57,36 @@ def get_sqlite_connection() -> sqlite3.Connection:
     return conn
 
 
-def get_postgres_connection():
+@lru_cache(maxsize=1)
+def _get_postgres_pool():
     database_url = get_database_url()
     if not database_url:
         raise RuntimeError("DATABASE_URL est vide. Renseigne la chaîne de connexion Supabase/PostgreSQL.")
     try:
-        import psycopg
         from psycopg.rows import dict_row
+        from psycopg_pool import ConnectionPool
     except ImportError as exc:
-        raise RuntimeError("psycopg n'est pas installé. Lance : pip install -r requirements.txt") from exc
-
-    direct_caller = "unknown"
-    parent_caller = "unknown"
-    frame = inspect.currentframe()
-    try:
-        if frame and frame.f_back and frame.f_back.f_back:
-            direct_caller = frame.f_back.f_back.f_code.co_name
-            if frame.f_back.f_back.f_back:
-                parent_caller = frame.f_back.f_back.f_back.f_code.co_name
-    finally:
-        del frame
+        raise RuntimeError("psycopg_pool n'est pas installé. Lance : pip install -r requirements.txt") from exc
 
     started = time.perf_counter()
-    conn = psycopg.connect(database_url, row_factory=dict_row)
-    elapsed = time.perf_counter() - started
-    print(
-        f"[PERF][DB_CONNECT] {elapsed:.3f}s direct={direct_caller} parent={parent_caller}",
-        flush=True,
+    pool = ConnectionPool(
+        conninfo=database_url,
+        min_size=1,
+        max_size=5,
+        kwargs={"row_factory": dict_row},
+        open=True,
     )
-    return conn
+    pool.wait(timeout=30)
+    print(f"[PERF][DB_POOL_INIT] {time.perf_counter() - started:.3f}s", flush=True)
+    return pool
+
+
+@contextmanager
+def get_postgres_connection():
+    started = time.perf_counter()
+    with _get_postgres_pool().connection(timeout=30) as conn:
+        print(f"[PERF][DB_CHECKOUT] {time.perf_counter() - started:.3f}s", flush=True)
+        yield conn
 
 
 def get_connection():

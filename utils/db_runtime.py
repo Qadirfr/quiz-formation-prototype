@@ -73,7 +73,7 @@ def _get_postgres_pool():
         conninfo=database_url,
         min_size=1,
         max_size=5,
-        kwargs={"row_factory": dict_row},
+        kwargs={"row_factory": dict_row, "prepare_threshold": None},
         open=True,
     )
     pool.wait(timeout=30)

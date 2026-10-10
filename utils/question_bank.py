@@ -1118,6 +1118,53 @@ def list_bank_question_types():
     return _v23_list_bank_values("question_type", "Non renseigné")
 
 
+def list_question_bank_records_for_audit(
+    include_inactive: bool = True,
+    limit: int = 5000,
+) -> List[Dict[str, Any]]:
+    """Retourne les questions de la banque avec leur JSON pour audit en lecture seule."""
+    init_question_bank_db()
+    placeholder = "%s" if _pg() else "?"
+    where = ""
+    if not include_inactive:
+        where = "WHERE is_active = true" if _pg() else "WHERE is_active = 1"
+
+    rows = _fetchall(
+        f"""
+        SELECT
+            id,
+            source_quiz_id,
+            source_quiz_title,
+            training_scope,
+            question_set_type,
+            question_type,
+            domain,
+            subdomain,
+            difficulty,
+            cognitive_level,
+            competency,
+            concept_evaluated,
+            question_text,
+            question_json,
+            is_active,
+            created_at
+        FROM question_bank
+        {where}
+        ORDER BY id ASC
+        LIMIT {placeholder}
+        """,
+        (int(limit),),
+    )
+
+    result: List[Dict[str, Any]] = []
+    for row in rows:
+        item = dict(row)
+        item["question_json"] = _json_load(item.get("question_json")) or {}
+        item["is_active"] = bool(item.get("is_active"))
+        result.append(item)
+    return result
+
+
 def _v23_add_filter(where, params, field, value, placeholder, empty_label=None):
     if not value or value == "Tous":
         return

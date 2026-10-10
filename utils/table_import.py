@@ -37,6 +37,13 @@ TYPE_MAP = {
     "likert": "self_assessment",
     "rating_scale": "self_assessment",
     "scale": "self_assessment",
+    "fill_blank": "fill_blank",
+    "fill_in_blank": "fill_blank",
+    "fill_in_the_blank": "fill_blank",
+    "texte_a_trous": "fill_blank",
+    "question_a_trous": "fill_blank",
+    "cloze": "fill_blank",
+    "completion": "fill_blank",
 }
 
 

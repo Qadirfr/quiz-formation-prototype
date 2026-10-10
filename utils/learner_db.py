@@ -414,7 +414,8 @@ def get_progress_answers_for_learner_email(
                 la.learning_objective,
                 la.concept_evaluated,
                 la.cognitive_level,
-                la.competency
+                la.competency,
+                la.remediation
             FROM quiz_attempts qa
             JOIN learners l ON l.id = qa.learner_id
             JOIN learner_answers la ON la.attempt_id = qa.id
@@ -442,7 +443,8 @@ def get_progress_answers_for_learner_email(
                 la.learning_objective,
                 la.concept_evaluated,
                 la.cognitive_level,
-                la.competency
+                la.competency,
+                la.remediation
             FROM quiz_attempts qa
             JOIN learners l ON l.id = qa.learner_id
             JOIN learner_answers la ON la.attempt_id = qa.id

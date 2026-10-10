@@ -69,6 +69,9 @@ from utils.question_bank import (
     list_bank_subdomains,
     list_bank_training_scopes,
     list_question_bank_records_for_audit,
+    build_safe_cdpo_migration_preview,
+    apply_safe_cdpo_question_migration,
+    list_question_schema_migration_log,
     select_adaptive_questions,
     select_random_questions,
     select_random_questions_scoped,
@@ -3214,6 +3217,168 @@ def trainer_app() -> None:
                     mime="application/json",
                     width="stretch",
                 )
+
+                if audit_result.get("scope") == "CDPO actif":
+                    st.markdown("---")
+                    st.markdown("### Migration sûre — banque CDPO uniquement")
+                    st.caption(
+                        "Cette étape ne touche ni aux quiz sauvegardés, ni aux questions "
+                        "orange/rouges, ni à la banque civique. La migration crée un journal "
+                        "avant/après en base avant toute modification."
+                    )
+
+                    if st.button(
+                        "Prévisualiser la migration sûre",
+                        key="preview_safe_cdpo_schema_migration",
+                        width="stretch",
+                    ):
+                        with st.spinner("Préparation de la prévisualisation..."):
+                            st.session_state.safe_cdpo_migration_preview = (
+                                build_safe_cdpo_migration_preview(limit=5000)
+                            )
+                            st.session_state.safe_cdpo_migration_confirm = False
+                            st.session_state.safe_cdpo_migration_result = None
+
+                    migration_preview = st.session_state.get(
+                        "safe_cdpo_migration_preview"
+                    )
+                    if migration_preview:
+                        candidates = migration_preview.get("candidates") or []
+                        blocked = migration_preview.get("blocked") or []
+
+                        p1, p2 = st.columns(2)
+                        p1.metric(
+                            "Corrections sûres applicables",
+                            migration_preview.get("candidate_count", 0),
+                        )
+                        p2.metric(
+                            "Bloquées par sécurité",
+                            migration_preview.get("blocked_count", 0),
+                        )
+
+                        preview_rows = [
+                            {
+                                "ID": item.get("id"),
+                                "Quiz source": item.get("source_quiz_title"),
+                                "Domaine": item.get("domain"),
+                                "Sous-domaine": item.get("subdomain"),
+                                "Type DB actuel": item.get("current_db_type"),
+                                "Type JSON actuel": item.get("current_json_type"),
+                                "Type futur": item.get("target_type"),
+                                "Anomalies": " | ".join(item.get("issues") or []),
+                                "Question": item.get("question_preview"),
+                            }
+                            for item in candidates
+                        ]
+
+                        if preview_rows:
+                            st.dataframe(
+                                preview_rows,
+                                width="stretch",
+                                hide_index=True,
+                            )
+
+                        if blocked:
+                            st.warning(
+                                f"{len(blocked)} question(s) ont été exclue(s) "
+                                "automatiquement de la migration par sécurité."
+                            )
+                            blocked_rows = [
+                                {
+                                    "ID": item.get("id"),
+                                    "Type futur": item.get("target_type"),
+                                    "Motif": item.get("blocked_reason"),
+                                    "Question": item.get("question_preview"),
+                                }
+                                for item in blocked
+                            ]
+                            st.dataframe(
+                                blocked_rows,
+                                width="stretch",
+                                hide_index=True,
+                            )
+
+                        st.download_button(
+                            "Télécharger la prévisualisation de migration",
+                            data=json.dumps(
+                                migration_preview,
+                                ensure_ascii=False,
+                                indent=2,
+                                default=str,
+                            ),
+                            file_name="preview_migration_schema_cdpo_v2.json",
+                            mime="application/json",
+                            width="stretch",
+                        )
+
+                        if candidates:
+                            st.warning(
+                                "L'application ne modifiera que les lignes listées "
+                                "ci-dessus. Une sauvegarde avant/après sera conservée "
+                                "dans question_schema_migration_log."
+                            )
+                            confirm_safe_migration = st.checkbox(
+                                "J'ai contrôlé la prévisualisation et j'autorise "
+                                "la migration des candidats sûrs de la banque CDPO.",
+                                key="safe_cdpo_migration_confirm",
+                            )
+
+                            if st.button(
+                                "Appliquer les corrections sûres à la banque CDPO",
+                                type="primary",
+                                width="stretch",
+                                disabled=not confirm_safe_migration,
+                                key="apply_safe_cdpo_schema_migration",
+                            ):
+                                ids_to_apply = [
+                                    int(item["id"])
+                                    for item in candidates
+                                    if item.get("id") is not None
+                                ]
+                                try:
+                                    with st.spinner(
+                                        "Sauvegarde et migration atomique en cours..."
+                                    ):
+                                        migration_result = (
+                                            apply_safe_cdpo_question_migration(
+                                                ids_to_apply
+                                            )
+                                        )
+                                    st.session_state.safe_cdpo_migration_result = (
+                                        migration_result
+                                    )
+                                    st.session_state.safe_cdpo_migration_preview = None
+                                    st.session_state.question_schema_audit = None
+                                    st.success(
+                                        f"Migration terminée : "
+                                        f"{migration_result.get('applied', 0)} "
+                                        "question(s) corrigée(s). "
+                                        "Le journal de sauvegarde a été créé."
+                                    )
+                                    st.info(
+                                        "Relance maintenant l'audit CDPO actif pour "
+                                        "mesurer le résultat de la migration."
+                                    )
+                                except Exception as exc:
+                                    st.error(
+                                        "Migration annulée sans modification complète : "
+                                        f"{exc}"
+                                    )
+
+                    migration_result = st.session_state.get(
+                        "safe_cdpo_migration_result"
+                    )
+                    if migration_result:
+                        run_id = migration_result.get("migration_run_id") or ""
+                        if run_id:
+                            log_rows = list_question_schema_migration_log(
+                                migration_run_id=run_id,
+                                limit=500,
+                            )
+                            st.success(
+                                f"Sauvegarde de migration : {run_id} — "
+                                f"{len(log_rows)} entrée(s) journalisée(s)."
+                            )
 
         current_quiz = st.session_state.quiz
         if current_quiz and not current_quiz.get("error"):

@@ -22,6 +22,14 @@ TYPE_MAP = {
     "rapprochement_idees": "matching",
     "appariement": "matching",
     "matching": "matching",
+    "ordering": "ordering",
+    "order": "ordering",
+    "ordonnancement": "ordering",
+    "ordre": "ordering",
+    "classement": "ordering",
+    "sequence": "ordering",
+    "sequencing": "ordering",
+    "ranking": "ordering",
 }
 
 

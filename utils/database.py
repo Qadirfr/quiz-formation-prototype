@@ -165,6 +165,43 @@ def list_saved_quizzes(limit: int = 200) -> List[Dict[str, Any]]:
     return _fetchall(sql, (limit,))
 
 
+def list_saved_quizzes_with_content(limit: int = 500) -> List[Dict[str, Any]]:
+    """Retourne les quiz sauvegardés avec leur contenu JSON pour audit en lecture seule."""
+    init_quiz_history_db()
+
+    if _pg():
+        rows = _fetchall(
+            """
+            SELECT
+                id, title, module, difficulty, question_count,
+                quiz_json, source_preview, created_at
+            FROM saved_quizzes
+            ORDER BY created_at DESC, id DESC
+            LIMIT %s
+            """,
+            (int(limit),),
+        )
+    else:
+        rows = _fetchall(
+            """
+            SELECT
+                id, title, module, difficulty, question_count,
+                quiz_json, source_preview, created_at
+            FROM saved_quizzes
+            ORDER BY datetime(created_at) DESC, id DESC
+            LIMIT ?
+            """,
+            (int(limit),),
+        )
+
+    result: List[Dict[str, Any]] = []
+    for row in rows:
+        item = dict(row)
+        item["quiz_json"] = _json_load(item.get("quiz_json")) or {}
+        result.append(item)
+    return result
+
+
 def load_quiz(quiz_id: int) -> Optional[Dict[str, Any]]:
     init_quiz_history_db()
     if _pg():

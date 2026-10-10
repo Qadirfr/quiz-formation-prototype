@@ -828,6 +828,100 @@ def is_ordering_question(question: Dict[str, Any]) -> bool:
     return any(cue in text for cue in cues)
 
 
+SELF_ASSESSMENT_TYPES = {
+    "self_assessment",
+    "self_evaluation",
+    "self_rating",
+    "likert",
+    "rating_scale",
+    "scale",
+}
+
+
+def is_self_assessment_question(question: Dict[str, Any]) -> bool:
+    qtype = normalize_answer(question.get("type", "")).replace(" ", "_")
+    if qtype in SELF_ASSESSMENT_TYPES:
+        return True
+
+    text = normalize_answer(question.get("question", ""))
+    cues = [
+        "auto evaluez",
+        "auto evaluation",
+        "evaluez de 1 a 5 votre maitrise",
+        "evaluez votre maitrise de 1 a 5",
+        "notez de 1 a 5 votre maitrise",
+        "situez votre niveau de 1 a 5",
+    ]
+    return any(cue in text for cue in cues)
+
+
+def extract_self_assessment_items(question: Dict[str, Any]) -> List[Dict[str, str]]:
+    raw_items = question.get("self_assessment_items") or question.get("items") or []
+    parsed: List[Dict[str, str]] = []
+
+    if isinstance(raw_items, list) and raw_items:
+        for idx, item in enumerate(raw_items):
+            if isinstance(item, dict):
+                label = str(item.get("label") or option_label(idx)).strip().upper()
+                text = str(item.get("text") or item.get("value") or "").strip()
+            else:
+                raw = str(item).strip()
+                match = re.match(r"^\s*([A-Za-z])\s*[\.\)\-:]\s*(.+)$", raw)
+                if match:
+                    label, text = match.group(1).upper(), match.group(2).strip()
+                else:
+                    label, text = option_label(idx), raw
+            if text:
+                parsed.append({"label": label, "text": text})
+        if parsed:
+            return parsed
+
+    options = question.get("options") or []
+    if isinstance(options, list) and options:
+        for idx, item in enumerate(options):
+            raw = str(item).strip()
+            match = re.match(r"^\s*([A-Za-z])\s*[\.\)\-:]\s*(.+)$", raw)
+            if match:
+                label, text = match.group(1).upper(), match.group(2).strip()
+            else:
+                label, text = option_label(idx), raw
+            if text:
+                parsed.append({"label": label, "text": text})
+        if parsed:
+            return parsed
+
+    text = str(question.get("question") or "")
+    marker_match = re.search(
+        r"(?:éléments?|elements?)\s+propos(?:é|e)s?\s*:\s*(.+)$",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if marker_match:
+        chunks = [chunk.strip() for chunk in marker_match.group(1).split("|") if chunk.strip()]
+        for idx, chunk in enumerate(chunks):
+            match = re.match(r"^\s*([A-Za-z])\s*[\.\)\-:]\s*(.+)$", chunk)
+            if match:
+                parsed.append({"label": match.group(1).upper(), "text": match.group(2).strip()})
+            else:
+                parsed.append({"label": option_label(idx), "text": chunk})
+
+    return parsed
+
+
+def self_assessment_prompt_text(question: Dict[str, Any]) -> str:
+    text = str(question.get("question") or "")
+    marker_match = re.search(
+        r"\s*(?:éléments?|elements?)\s+propos(?:é|e)s?\s*:",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if marker_match:
+        clean = text[:marker_match.start()].strip()
+        if clean:
+            return clean
+    return text
+
+
 def extract_ordering_items(question: Dict[str, Any]) -> List[Dict[str, Any]]:
     raw_items = question.get("ordering_items") or question.get("items") or []
     parsed: List[Dict[str, Any]] = []
@@ -1001,6 +1095,33 @@ def evaluate_answer(question: Dict[str, Any], user_answer: Any) -> Dict[str, Any
             "correct_answer": correct_answer,
             "selected_feedback": selected_feedback,
             "correct_feedback": correct_feedback,
+        }
+
+    if is_self_assessment_question(question):
+        items = extract_self_assessment_items(question)
+        given = user_answer if isinstance(user_answer, dict) else {}
+        answered = {
+            str(key).upper(): value
+            for key, value in given.items()
+            if str(value).strip() not in ["", "0", "None"]
+        }
+        expected_count = len(items)
+        complete = expected_count == 0 or len(answered) >= expected_count
+
+        feedback = "Auto-évaluation enregistrée (non notée)."
+        if not complete:
+            feedback = (
+                f"Auto-évaluation enregistrée : {len(answered)} dimension(s) renseignée(s) "
+                f"sur {expected_count}. Cette question n’entre pas dans le score."
+            )
+
+        return {
+            "score": 0.0,
+            "is_correct": None,
+            "scorable": False,
+            "correct_answer": "",
+            "selected_feedback": feedback,
+            "correct_feedback": question.get("explanation", ""),
         }
 
     if is_ordering_question(question):
@@ -1191,6 +1312,8 @@ def compute_domain_summary(details: List[Dict[str, Any]]) -> Dict[str, Dict[str,
     summary: Dict[str, Dict[str, Any]] = {}
 
     for answer in details:
+        if answer.get("question_type") == "self_assessment":
+            continue
         domain = answer.get("domain") or "Non classé"
         item = summary.setdefault(
             domain,
@@ -1244,6 +1367,8 @@ def compute_cognitive_summary(details: List[Dict[str, Any]]) -> Dict[str, Dict[s
     summary: Dict[str, Dict[str, Any]] = {}
 
     for answer in details:
+        if answer.get("question_type") == "self_assessment":
+            continue
         level = answer.get("cognitive_level") or "Non renseigné"
         item = summary.setdefault(level, {"score": 0.0, "max_score": 0.0, "manual_count": 0, "total_questions": 0})
         item["total_questions"] += 1
@@ -1320,6 +1445,8 @@ def _progress_aggregate(
     groups: Dict[Any, Dict[str, Any]] = {}
 
     for row in rows:
+        if row.get("question_type") == "self_assessment":
+            continue
         if dimension == "subdomain":
             domain = (row.get("domain") or "Non classé").strip()
             subdomain = (row.get("subdomain") or "Non renseigné").strip()
@@ -1438,6 +1565,7 @@ def render_global_progress(
         1
         for row in filtered_rows
         if row.get("is_correct") is None
+        and row.get("question_type") != "self_assessment"
     )
     global_percentage = (
         round((global_score / global_max_score) * 100, 1)
@@ -1777,8 +1905,31 @@ def render_attempt_report(attempt: Dict[str, Any], details: List[Dict[str, Any]]
     for item in improvement_plan:
         st.warning(item)
 
+    self_assessment_answers = [
+        answer for answer in details
+        if answer.get("question_type") == "self_assessment"
+    ]
+    if self_assessment_answers:
+        st.markdown("### Auto-évaluation (non notée)")
+        for answer in self_assessment_answers:
+            values = parse_json_text(answer.get("user_answer_json") or "")
+            with st.expander(
+                f"Q{answer['question_index']} — Auto-évaluation — "
+                f"{answer.get('domain') or 'Non classé'}",
+                expanded=False,
+            ):
+                st.write(answer.get("question_text", ""))
+                if isinstance(values, dict) and values:
+                    for key, value in values.items():
+                        st.write(f"**{key}** : {value}/5")
+                else:
+                    st.caption(f"Réponse : {answer.get('user_answer_json') or '-'}")
+                st.info("Cette question mesure votre perception de maîtrise et n’entre pas dans le score.")
+
     st.markdown("### Réponses détaillées")
     for answer in details:
+        if answer.get("question_type") == "self_assessment":
+            continue
         ok = answer.get("is_correct")
         label = status_label(ok)
 
@@ -1956,14 +2107,50 @@ def render_creator_question(question: Dict[str, Any], index: int) -> None:
 def render_test_question(question: Dict[str, Any], index: int) -> Any:
     qtype = question.get("type", "")
     st.markdown(f"### Question {index}")
-    st.markdown(
-        ordering_prompt_text(question)
-        if is_ordering_question(question)
-        else question.get("question", "")
-    )
+    if is_self_assessment_question(question):
+        st.markdown(self_assessment_prompt_text(question))
+    elif is_ordering_question(question):
+        st.markdown(ordering_prompt_text(question))
+    else:
+        st.markdown(question.get("question", ""))
 
     options = question.get("options") or []
     pairs = question.get("pairs") or []
+
+    if is_self_assessment_question(question):
+        items = extract_self_assessment_items(question)
+        if not items:
+            st.warning(
+                "Cette auto-évaluation ne contient pas encore de dimensions structurées."
+            )
+            return st.text_input(
+                "Votre auto-évaluation",
+                key=f"self_assessment_fallback_{index}",
+            )
+
+        st.caption(
+            "Pour chaque dimension : 1 = maîtrise très faible · 2 = faible · "
+            "3 = intermédiaire · 4 = bonne · 5 = très bonne."
+        )
+        answers = {}
+        labels = {
+            0: "Choisir…",
+            1: "1 — Très faible",
+            2: "2 — Faible",
+            3: "3 — Intermédiaire",
+            4: "4 — Bonne",
+            5: "5 — Très bonne",
+        }
+        for item in items:
+            value = st.selectbox(
+                f"{item.get('label')}. {item.get('text')}",
+                options=[0, 1, 2, 3, 4, 5],
+                format_func=lambda v, mapping=labels: mapping[v],
+                key=f"self_assessment_{index}_{item.get('label')}",
+            )
+            if value:
+                answers[str(item.get("label") or "").upper()] = value
+        return answers
 
     if is_ordering_question(question):
         items = extract_ordering_items(question)
@@ -2030,15 +2217,47 @@ def render_test_question(question: Dict[str, Any], index: int) -> Any:
 def render_session_question(question: Dict[str, Any], index: int, session_id: int) -> Any:
     qtype = question.get("type", "")
     st.markdown(f"### Question {index}")
-    st.markdown(
-        ordering_prompt_text(question)
-        if is_ordering_question(question)
-        else question.get("question", "")
-    )
+    if is_self_assessment_question(question):
+        st.markdown(self_assessment_prompt_text(question))
+    elif is_ordering_question(question):
+        st.markdown(ordering_prompt_text(question))
+    else:
+        st.markdown(question.get("question", ""))
 
     options = question.get("options") or []
     pairs = question.get("pairs") or []
     prefix = f"session_{session_id}_{index}"
+
+    if is_self_assessment_question(question):
+        items = extract_self_assessment_items(question)
+        if not items:
+            return st.text_input(
+                "Votre auto-évaluation",
+                key=f"{prefix}_self_assessment_fallback",
+            )
+        st.caption(
+            "Pour chaque dimension : 1 = maîtrise très faible · 2 = faible · "
+            "3 = intermédiaire · 4 = bonne · 5 = très bonne."
+        )
+        answers = {}
+        labels = {
+            0: "Choisir…",
+            1: "1 — Très faible",
+            2: "2 — Faible",
+            3: "3 — Intermédiaire",
+            4: "4 — Bonne",
+            5: "5 — Très bonne",
+        }
+        for item in items:
+            value = st.selectbox(
+                f"{item.get('label')}. {item.get('text')}",
+                options=[0, 1, 2, 3, 4, 5],
+                format_func=lambda v, mapping=labels: mapping[v],
+                key=f"{prefix}_self_assessment_{item.get('label')}",
+            )
+            if value:
+                answers[str(item.get("label") or "").upper()] = value
+        return answers
 
     if is_ordering_question(question):
         items = extract_ordering_items(question)
@@ -3280,17 +3499,26 @@ def learner_app() -> None:
 
                     is_correct = evaluation["is_correct"]
                     score = evaluation["score"]
+                    scorable = evaluation.get("scorable", True)
 
-                    if is_correct is None:
+                    if scorable is False:
+                        pass
+                    elif is_correct is None:
                         manual_count += 1
                     else:
                         max_score += 1.0
                         total_score += score
 
+                    question_for_save = dict(question)
+                    if is_self_assessment_question(question):
+                        question_for_save["type"] = "self_assessment"
+                    elif is_ordering_question(question):
+                        question_for_save["type"] = "ordering"
+
                     save_attempt_result(
                         attempt_id=attempt_id,
                         question_index=i,
-                        question=question,
+                        question=question_for_save,
                         user_answer=user_answer,
                         correct_answer=evaluation["correct_answer"],
                         is_correct=is_correct,

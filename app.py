@@ -803,8 +803,29 @@ def is_ordering_type(qtype: Any) -> bool:
         return True
     return any(
         token in normalized
-        for token in ["ordering", "ordonn", "classement", "sequence", "sequencing", "ranking"]
+        for token in ["ordering", "ordonn", "ordre", "classement", "sequence", "sequencing", "ranking"]
     )
+
+
+def is_ordering_question(question: Dict[str, Any]) -> bool:
+    if is_ordering_type(question.get("type", "")):
+        return True
+
+    text = normalize_answer(question.get("question", ""))
+    cues = [
+        "remettez dans l ordre",
+        "remettre dans l ordre",
+        "mettre dans l ordre",
+        "mettez dans l ordre",
+        "classez dans l ordre",
+        "classer dans l ordre",
+        "ordonner",
+        "ordonnez",
+        "ordre chronologique",
+        "ordre correct",
+        "ordre attendu",
+    ]
+    return any(cue in text for cue in cues)
 
 
 def extract_ordering_items(question: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -982,7 +1003,7 @@ def evaluate_answer(question: Dict[str, Any], user_answer: Any) -> Dict[str, Any
             "correct_feedback": correct_feedback,
         }
 
-    if is_ordering_type(qtype):
+    if is_ordering_question(question):
         items = extract_ordering_items(question)
         labels = [str(item.get("label") or "").upper() for item in items]
         expected = get_ordering_expected_labels(question, items)
@@ -1829,7 +1850,7 @@ def render_creator_question(question: Dict[str, Any], index: int) -> None:
         pairs = question.get("pairs") or []
         options = question.get("options") or []
 
-        if is_ordering_type(qtype):
+        if is_ordering_question(question):
             items = extract_ordering_items(question)
             expected = get_ordering_expected_labels(question, items)
             if items:
@@ -1877,14 +1898,14 @@ def render_test_question(question: Dict[str, Any], index: int) -> Any:
     st.markdown(f"### Question {index}")
     st.markdown(
         ordering_prompt_text(question)
-        if is_ordering_type(qtype)
+        if is_ordering_question(question)
         else question.get("question", "")
     )
 
     options = question.get("options") or []
     pairs = question.get("pairs") or []
 
-    if is_ordering_type(qtype):
+    if is_ordering_question(question):
         items = extract_ordering_items(question)
         if not items:
             st.warning(

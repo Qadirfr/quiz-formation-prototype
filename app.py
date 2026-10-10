@@ -15,7 +15,14 @@ import streamlit as st
 # Auto-refresh désactivé en V20.1 pour éviter les rafraîchissements permanents.
 st_autorefresh = None
 
-from utils.database import delete_quiz, init_db, list_saved_quizzes, load_quiz, save_quiz
+from utils.database import (
+    delete_quiz,
+    init_db,
+    list_saved_quizzes,
+    list_saved_quizzes_with_content,
+    load_quiz,
+    save_quiz,
+)
 from utils.export_utils import quiz_to_csv_bytes, quiz_to_json_bytes, quiz_to_markdown, quiz_to_markdown_bytes
 from utils.file_reader import clean_training_text, read_uploaded_file
 from utils.learner_db import (
@@ -61,10 +68,12 @@ from utils.question_bank import (
     list_bank_sources,
     list_bank_subdomains,
     list_bank_training_scopes,
+    list_question_bank_records_for_audit,
     select_adaptive_questions,
     select_random_questions,
     select_random_questions_scoped,
 )
+from utils.question_schema import classify_question, summarize_audit
 
 
 st.set_page_config(
@@ -2922,6 +2931,215 @@ def trainer_app() -> None:
     with tab_bank:
         st.subheader("Banque de questions")
         st.caption("Cette banque sert à constituer des examens aléatoires ou ciblés à partir de toutes les questions validées.")
+
+        with st.expander("Audit global du schéma des questions (lecture seule)", expanded=False):
+            st.caption(
+                "Analyse la banque de questions ET les quiz sauvegardés sans modifier aucune donnée. "
+                "L'objectif est d'identifier les types mal déclarés, les questions ambiguës "
+                "et les structures incomplètes avant toute migration."
+            )
+
+            audit_include_inactive = st.checkbox(
+                "Inclure les questions inactives de la banque",
+                value=True,
+                key="schema_audit_include_inactive",
+            )
+
+            if st.button(
+                "Lancer l'audit complet",
+                key="run_question_schema_audit",
+                width="stretch",
+            ):
+                with st.spinner("Audit des questions en cours..."):
+                    bank_records = list_question_bank_records_for_audit(
+                        include_inactive=audit_include_inactive,
+                        limit=5000,
+                    )
+                    saved_records = list_saved_quizzes_with_content(limit=500)
+
+                    audit_rows = []
+
+                    for row in bank_records:
+                        question = row.get("question_json") or {}
+                        audit = classify_question(question)
+                        issues = list(audit.get("issues") or [])
+
+                        db_type = str(row.get("question_type") or "")
+                        detected_type = audit.get("detected_type") or "unknown"
+                        if db_type and db_type != detected_type:
+                            conflict = f"db_type_conflict:{db_type}->{detected_type}"
+                            if conflict not in issues:
+                                issues.append(conflict)
+
+                        audit_rows.append({
+                            "source_kind": "Banque",
+                            "source_id": row.get("id"),
+                            "source_title": row.get("source_quiz_title") or "",
+                            "question_index": "",
+                            "active": bool(row.get("is_active")),
+                            "training_scope": row.get("training_scope") or "",
+                            "question_set_type": row.get("question_set_type") or "",
+                            "domain": row.get("domain") or "",
+                            "subdomain": row.get("subdomain") or "",
+                            "declared_type": audit.get("declared_type") or db_type,
+                            "detected_type": detected_type,
+                            "confidence": audit.get("confidence") or "",
+                            "needs_review": (
+                                bool(audit.get("needs_review"))
+                                or bool(issues)
+                            ),
+                            "issues": issues,
+                            "question_preview": audit.get("question_preview") or "",
+                            "suggested_patch": audit.get("suggested_patch") or {},
+                        })
+
+                    for quiz_row in saved_records:
+                        quiz = quiz_row.get("quiz_json") or {}
+                        questions = quiz.get("questions") or []
+                        for index, question in enumerate(questions, start=1):
+                            if not isinstance(question, dict):
+                                audit_rows.append({
+                                    "source_kind": "Quiz sauvegardé",
+                                    "source_id": quiz_row.get("id"),
+                                    "source_title": quiz_row.get("title") or "",
+                                    "question_index": index,
+                                    "active": True,
+                                    "training_scope": "",
+                                    "question_set_type": "",
+                                    "domain": "",
+                                    "subdomain": "",
+                                    "declared_type": "",
+                                    "detected_type": "unknown",
+                                    "confidence": "low",
+                                    "needs_review": True,
+                                    "issues": ["question_payload_not_object"],
+                                    "question_preview": str(question)[:240],
+                                    "suggested_patch": {},
+                                })
+                                continue
+
+                            audit = classify_question(question)
+                            audit_rows.append({
+                                "source_kind": "Quiz sauvegardé",
+                                "source_id": quiz_row.get("id"),
+                                "source_title": quiz_row.get("title") or "",
+                                "question_index": index,
+                                "active": True,
+                                "training_scope": question.get("training_scope") or "",
+                                "question_set_type": question.get("question_set_type") or "",
+                                "domain": question.get("domain") or question.get("domaine") or "",
+                                "subdomain": question.get("subdomain") or question.get("sous_domaine") or "",
+                                "declared_type": audit.get("declared_type") or "",
+                                "detected_type": audit.get("detected_type") or "unknown",
+                                "confidence": audit.get("confidence") or "",
+                                "needs_review": bool(audit.get("needs_review")),
+                                "issues": audit.get("issues") or [],
+                                "question_preview": audit.get("question_preview") or "",
+                                "suggested_patch": audit.get("suggested_patch") or {},
+                            })
+
+                    summary = summarize_audit(audit_rows)
+                    st.session_state.question_schema_audit = {
+                        "rows": audit_rows,
+                        "summary": summary,
+                        "bank_count": len(bank_records),
+                        "saved_quiz_count": len(saved_records),
+                        "saved_question_count": sum(
+                            len((row.get("quiz_json") or {}).get("questions") or [])
+                            for row in saved_records
+                        ),
+                    }
+
+            audit_result = st.session_state.get("question_schema_audit")
+            if audit_result:
+                rows = audit_result.get("rows") or []
+                summary = audit_result.get("summary") or {}
+
+                st.success(
+                    "Audit terminé en lecture seule : aucune question n'a été modifiée."
+                )
+
+                m1, m2, m3, m4 = st.columns(4)
+                m1.metric("Occurrences auditées", summary.get("total", 0))
+                m2.metric("Banque", audit_result.get("bank_count", 0))
+                m3.metric(
+                    "Questions dans quiz sauvegardés",
+                    audit_result.get("saved_question_count", 0),
+                )
+                m4.metric("À revoir", summary.get("review_count", 0))
+
+                st.markdown("#### Répartition détectée par type")
+                type_rows = [
+                    {"Type canonique": key, "Nombre": value}
+                    for key, value in sorted(
+                        (summary.get("by_type") or {}).items(),
+                        key=lambda item: (-item[1], item[0]),
+                    )
+                ]
+                st.dataframe(type_rows, width="stretch", hide_index=True)
+
+                issue_counts = summary.get("by_issue") or {}
+                if issue_counts:
+                    st.markdown("#### Anomalies détectées")
+                    issue_rows = [
+                        {"Anomalie": key, "Nombre": value}
+                        for key, value in sorted(
+                            issue_counts.items(),
+                            key=lambda item: (-item[1], item[0]),
+                        )
+                    ]
+                    st.dataframe(issue_rows, width="stretch", hide_index=True)
+
+                review_only = st.checkbox(
+                    "Afficher uniquement les questions à revoir",
+                    value=True,
+                    key="schema_audit_review_only",
+                )
+                source_filter = st.selectbox(
+                    "Source",
+                    ["Toutes", "Banque", "Quiz sauvegardé"],
+                    key="schema_audit_source_filter",
+                )
+
+                visible_rows = []
+                for row in rows:
+                    if review_only and not row.get("needs_review"):
+                        continue
+                    if source_filter != "Toutes" and row.get("source_kind") != source_filter:
+                        continue
+
+                    visible_rows.append({
+                        "Source": row.get("source_kind"),
+                        "ID": row.get("source_id"),
+                        "Quiz source": row.get("source_title"),
+                        "Q": row.get("question_index"),
+                        "Active": row.get("active"),
+                        "Formation": row.get("training_scope"),
+                        "Domaine": row.get("domain"),
+                        "Sous-domaine": row.get("subdomain"),
+                        "Type actuel": row.get("declared_type"),
+                        "Type détecté": row.get("detected_type"),
+                        "Confiance": row.get("confidence"),
+                        "Anomalies": " | ".join(row.get("issues") or []),
+                        "Question": row.get("question_preview"),
+                    })
+
+                st.markdown(
+                    f"#### Détail ({len(visible_rows)} occurrence(s) affichée(s))"
+                )
+                st.dataframe(
+                    visible_rows,
+                    width="stretch",
+                    hide_index=True,
+                )
+
+                st.download_button(
+                    "Télécharger le rapport d'audit JSON",
+                    data=json.dumps(audit_result, ensure_ascii=False, indent=2, default=str),
+                    file_name="audit_schema_questions_v2.json",
+                    mime="application/json",
+                    width="stretch",
+                )
 
         current_quiz = st.session_state.quiz
         if current_quiz and not current_quiz.get("error"):

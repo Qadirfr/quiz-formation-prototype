@@ -1133,6 +1133,7 @@ def list_question_bank_records_for_audit(
         f"""
         SELECT
             id,
+            question_hash,
             source_quiz_id,
             source_quiz_title,
             training_scope,

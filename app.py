@@ -1972,7 +1972,7 @@ def render_session_question(question: Dict[str, Any], index: int, session_id: in
     st.markdown(f"### Question {index}")
     st.markdown(
         ordering_prompt_text(question)
-        if is_ordering_type(qtype)
+        if is_ordering_question(question)
         else question.get("question", "")
     )
 
@@ -1980,7 +1980,7 @@ def render_session_question(question: Dict[str, Any], index: int, session_id: in
     pairs = question.get("pairs") or []
     prefix = f"session_{session_id}_{index}"
 
-    if is_ordering_type(qtype):
+    if is_ordering_question(question):
         items = extract_ordering_items(question)
         if not items:
             return st.text_input(

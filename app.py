@@ -784,6 +784,172 @@ def short_answer_matches(user_answer: Any, question: Dict[str, Any]) -> Optional
     return None
 
 
+ORDERING_TYPES = {
+    "ordering",
+    "order",
+    "ordonnancement",
+    "ordre",
+    "ranking",
+    "sequence",
+    "sequencing",
+    "classement",
+}
+
+
+def is_ordering_type(qtype: Any) -> bool:
+    normalized = normalize_answer(qtype).replace(" ", "_")
+    return normalized in ORDERING_TYPES
+
+
+def extract_ordering_items(question: Dict[str, Any]) -> List[Dict[str, Any]]:
+    raw_items = question.get("ordering_items") or question.get("items") or []
+    parsed: List[Dict[str, Any]] = []
+
+    if isinstance(raw_items, list) and raw_items:
+        for idx, item in enumerate(raw_items):
+            if isinstance(item, dict):
+                label = str(item.get("label") or option_label(idx)).strip().upper()
+                text = str(item.get("text") or item.get("value") or "").strip()
+                explicit = bool(item.get("label"))
+            else:
+                raw = str(item).strip()
+                match = re.match(r"^\s*([A-Za-z])\s*[\.\)\-:]\s*(.+)$", raw)
+                if match:
+                    label, text, explicit = match.group(1).upper(), match.group(2).strip(), True
+                else:
+                    label, text, explicit = option_label(idx), raw, False
+            if text:
+                parsed.append({"label": label, "text": text, "explicit_label": explicit})
+        if parsed:
+            return parsed
+
+    options = question.get("options") or []
+    if isinstance(options, list) and options:
+        for idx, item in enumerate(options):
+            raw = str(item).strip()
+            match = re.match(r"^\s*([A-Za-z])\s*[\.\)\-:]\s*(.+)$", raw)
+            if match:
+                label, text, explicit = match.group(1).upper(), match.group(2).strip(), True
+            else:
+                label, text, explicit = option_label(idx), raw, False
+            if text:
+                parsed.append({"label": label, "text": text, "explicit_label": explicit})
+        if parsed:
+            return parsed
+
+    text = str(question.get("question") or "")
+    marker = re.search(
+        r"(?:éléments?|elements?)\s+à\s+remettre\s+dans\s+l[’']?ordre\s*:\s*(.+)$",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if marker:
+        chunks = [chunk.strip() for chunk in marker.group(1).split("|") if chunk.strip()]
+        for idx, chunk in enumerate(chunks):
+            match = re.match(r"^\s*([A-Za-z])\s*[\.\)\-:]\s*(.+)$", chunk)
+            if match:
+                parsed.append({
+                    "label": match.group(1).upper(),
+                    "text": match.group(2).strip(),
+                    "explicit_label": True,
+                })
+            else:
+                parsed.append({
+                    "label": option_label(idx),
+                    "text": chunk,
+                    "explicit_label": False,
+                })
+
+    return parsed
+
+
+def ordering_prompt_text(question: Dict[str, Any]) -> str:
+    text = str(question.get("question") or "")
+    marker = re.search(
+        r"\s*(?:éléments?|elements?)\s+à\s+remettre\s+dans\s+l[’']?ordre\s*:",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if marker:
+        clean = text[:marker.start()].strip()
+        if clean:
+            return clean
+    return text
+
+
+def normalize_ordering_answer(value: Any, valid_labels: List[str]) -> List[str]:
+    valid = {str(label).upper() for label in valid_labels}
+
+    if isinstance(value, list):
+        return [str(item).strip().upper() for item in value if str(item).strip()]
+
+    if isinstance(value, dict):
+        ordered = []
+        for key in sorted(value, key=lambda item: str(item)):
+            item = str(value[key]).strip().upper()
+            if item:
+                ordered.append(item)
+        return ordered
+
+    text = str(value or "").strip().upper()
+    if not text:
+        return []
+
+    compact = re.sub(r"[^A-Z]", "", text)
+    if compact and all(ch in valid for ch in compact):
+        return list(compact)
+
+    tokens = [token.upper() for token in re.findall(r"[A-Za-z]", text)]
+    return [token for token in tokens if token in valid]
+
+
+def get_ordering_expected_labels(
+    question: Dict[str, Any],
+    items: List[Dict[str, Any]],
+) -> List[str]:
+    labels = [str(item.get("label") or "").upper() for item in items if item.get("label")]
+    valid = set(labels)
+
+    explicit_order = question.get("correct_order") or question.get("expected_order")
+    if isinstance(explicit_order, list):
+        parsed = [str(item).strip().upper() for item in explicit_order if str(item).strip()]
+        if parsed and len(parsed) == len(labels) and set(parsed) == valid:
+            return parsed
+
+    correct_answer = question.get("correct_answer")
+    parsed = normalize_ordering_answer(correct_answer, labels)
+    if parsed and len(parsed) == len(labels) and set(parsed) == valid:
+        return parsed
+
+    # Compatibilité avec les anciennes questions d'ordonnancement :
+    # les éléments étaient mélangés dans l'énoncé mais étiquetés A, B, C...
+    # selon l'ordre attendu.
+    expected_alphabet = [option_label(i) for i in range(len(labels))]
+    if (
+        labels
+        and all(item.get("explicit_label") for item in items)
+        and set(labels) == set(expected_alphabet)
+        and "ordre" in normalize_answer(question.get("question", ""))
+    ):
+        return expected_alphabet
+
+    return []
+
+
+def format_ordering_sequence(
+    labels: List[str],
+    items: List[Dict[str, Any]],
+) -> str:
+    by_label = {
+        str(item.get("label") or "").upper(): str(item.get("text") or "")
+        for item in items
+    }
+    return " → ".join(
+        f"{label}. {by_label.get(label, '')}".strip()
+        for label in labels
+    )
+
+
 def evaluate_answer(question: Dict[str, Any], user_answer: Any) -> Dict[str, Any]:
     qtype = question.get("type", "")
     options = question.get("options") or []
@@ -806,6 +972,61 @@ def evaluate_answer(question: Dict[str, Any], user_answer: Any) -> Dict[str, Any
             "score": 1.0 if is_ok else 0.0,
             "is_correct": is_ok,
             "correct_answer": correct_answer,
+            "selected_feedback": selected_feedback,
+            "correct_feedback": correct_feedback,
+        }
+
+    if is_ordering_type(qtype):
+        items = extract_ordering_items(question)
+        labels = [str(item.get("label") or "").upper() for item in items]
+        expected = get_ordering_expected_labels(question, items)
+        given = normalize_ordering_answer(user_answer, labels)
+
+        if not items or not expected:
+            return {
+                "score": 0.0,
+                "is_correct": None,
+                "correct_answer": expected or correct_answer,
+                "selected_feedback": (
+                    "Réponse enregistrée. Cette question d’ordonnancement ne contient "
+                    "pas encore une correction structurée exploitable automatiquement."
+                ),
+                "correct_feedback": (
+                    question.get("explanation", "")
+                    or "Correction manuelle requise pour cette ancienne question."
+                ),
+            }
+
+        correct_positions = sum(
+            1 for idx, label in enumerate(expected)
+            if idx < len(given) and given[idx] == label
+        )
+        score = correct_positions / len(expected) if expected else 0.0
+        is_complete = len(given) == len(expected) and len(set(given)) == len(expected)
+        is_ok = is_complete and given == expected
+
+        if not is_complete:
+            selected_feedback = (
+                "L’ordre doit utiliser chaque élément une seule fois. "
+                f"Réponse reçue : {' → '.join(given) if given else 'aucune'}."
+            )
+        elif is_ok:
+            selected_feedback = "Toutes les étapes sont dans le bon ordre."
+        else:
+            selected_feedback = (
+                f"{correct_positions} position(s) sur {len(expected)} sont correctes."
+            )
+
+        expected_text = format_ordering_sequence(expected, items)
+        explanation = question.get("explanation", "")
+        correct_feedback = f"Ordre attendu : {expected_text}."
+        if explanation:
+            correct_feedback += f" {explanation}"
+
+        return {
+            "score": score,
+            "is_correct": is_ok,
+            "correct_answer": expected,
             "selected_feedback": selected_feedback,
             "correct_feedback": correct_feedback,
         }
@@ -881,9 +1102,12 @@ def evaluate_answer(question: Dict[str, Any], user_answer: Any) -> Dict[str, Any
 
     return {
         "score": 0.0,
-        "is_correct": False,
+        "is_correct": None,
         "correct_answer": correct_answer,
-        "selected_feedback": "Type de question non reconnu.",
+        "selected_feedback": (
+            "Type de question non pris en charge automatiquement. "
+            "La réponse est conservée pour correction manuelle et ne pénalise pas le score automatique."
+        ),
         "correct_feedback": question.get("explanation", ""),
     }
 
@@ -1340,7 +1564,18 @@ def render_creator_question(question: Dict[str, Any], index: int) -> None:
         pairs = question.get("pairs") or []
         options = question.get("options") or []
 
-        if qtype == "matching" and pairs:
+        if is_ordering_type(qtype):
+            items = extract_ordering_items(question)
+            expected = get_ordering_expected_labels(question, items)
+            if items:
+                st.markdown("**Éléments à ordonner**")
+                for item in items:
+                    st.write(f"{item.get('label')}. {item.get('text')}")
+            if expected:
+                st.success(f"Ordre attendu : {format_ordering_sequence(expected, items)}")
+            else:
+                st.warning("Ordre attendu non structuré : correction manuelle nécessaire.")
+        elif qtype == "matching" and pairs:
             col_left, col_right = st.columns(2)
             with col_left:
                 st.markdown("**Colonne A**")
@@ -1375,10 +1610,47 @@ def render_creator_question(question: Dict[str, Any], index: int) -> None:
 def render_test_question(question: Dict[str, Any], index: int) -> Any:
     qtype = question.get("type", "")
     st.markdown(f"### Question {index}")
-    st.markdown(question.get("question", ""))
+    st.markdown(
+        ordering_prompt_text(question)
+        if is_ordering_type(qtype)
+        else question.get("question", "")
+    )
 
     options = question.get("options") or []
     pairs = question.get("pairs") or []
+
+    if is_ordering_type(qtype):
+        items = extract_ordering_items(question)
+        if not items:
+            st.warning(
+                "Cette ancienne question d’ordonnancement ne contient pas encore "
+                "d’éléments structurés. Saisis l’ordre attendu avec les lettres."
+            )
+            return st.text_input(
+                "Ton ordre (exemple : ABCDE)",
+                key=f"ordering_fallback_{index}",
+            )
+
+        labels = [str(item.get("label") or "").upper() for item in items]
+        display = {
+            str(item.get("label") or "").upper():
+            f"{str(item.get('label') or '').upper()}. {item.get('text', '')}"
+            for item in items
+        }
+        st.caption("Place chaque élément une seule fois, du premier au dernier.")
+        answer = []
+        for position in range(len(items)):
+            selected = st.selectbox(
+                f"{position + 1}e position",
+                options=[""] + labels,
+                format_func=lambda value, mapping=display: (
+                    "Choisir…" if not value else mapping.get(value, value)
+                ),
+                key=f"ordering_{index}_{position}",
+            )
+            if selected:
+                answer.append(selected)
+        return answer
 
     if qtype in ["single_choice", "true_false"]:
         display_options = [f"{option_label(i)}. {option}" for i, option in enumerate(options)]
@@ -1412,11 +1684,43 @@ def render_test_question(question: Dict[str, Any], index: int) -> Any:
 def render_session_question(question: Dict[str, Any], index: int, session_id: int) -> Any:
     qtype = question.get("type", "")
     st.markdown(f"### Question {index}")
-    st.markdown(question.get("question", ""))
+    st.markdown(
+        ordering_prompt_text(question)
+        if is_ordering_type(qtype)
+        else question.get("question", "")
+    )
 
     options = question.get("options") or []
     pairs = question.get("pairs") or []
     prefix = f"session_{session_id}_{index}"
+
+    if is_ordering_type(qtype):
+        items = extract_ordering_items(question)
+        if not items:
+            return st.text_input(
+                "Ton ordre (exemple : ABCDE)",
+                key=f"{prefix}_ordering_fallback",
+            )
+        labels = [str(item.get("label") or "").upper() for item in items]
+        display = {
+            str(item.get("label") or "").upper():
+            f"{str(item.get('label') or '').upper()}. {item.get('text', '')}"
+            for item in items
+        }
+        st.caption("Place chaque élément une seule fois, du premier au dernier.")
+        answer = []
+        for position in range(len(items)):
+            selected = st.selectbox(
+                f"{position + 1}e position",
+                options=[""] + labels,
+                format_func=lambda value, mapping=display: (
+                    "Choisir…" if not value else mapping.get(value, value)
+                ),
+                key=f"{prefix}_ordering_{position}",
+            )
+            if selected:
+                answer.append(selected)
+        return answer
 
     if qtype in ["single_choice", "true_false"]:
         display_options = [f"{option_label(i)}. {option}" for i, option in enumerate(options)]

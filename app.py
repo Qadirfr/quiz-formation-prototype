@@ -1415,18 +1415,89 @@ def render_global_progress(
         st.warning("Aucune tentative ne correspond aux types sélectionnés.")
         return
 
+    # La vue globale reprend les mêmes indicateurs que la vue par tentative,
+    # mais calculés sur l'ensemble des réponses des évaluations sélectionnées.
+    global_domain_summary = compute_domain_summary(filtered_rows)
+    global_cognitive_summary = compute_cognitive_summary(filtered_rows)
+    global_improvement_plan = build_improvement_plan(
+        global_domain_summary,
+        global_cognitive_summary,
+    )
+
+    global_score = sum(
+        float(row.get("score") or 0)
+        for row in filtered_rows
+        if row.get("is_correct") is not None
+    )
+    global_max_score = float(sum(
+        1
+        for row in filtered_rows
+        if row.get("is_correct") is not None
+    ))
+    global_manual_count = sum(
+        1
+        for row in filtered_rows
+        if row.get("is_correct") is None
+    )
+    global_percentage = (
+        round((global_score / global_max_score) * 100, 1)
+        if global_max_score
+        else 0.0
+    )
+    global_recommended_level = recommendation_from_percentage(global_percentage)
+
+    st.markdown("### Synthèse visuelle")
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Score global", f"{global_percentage}%")
+    col2.metric("Niveau conseillé", global_recommended_level)
+    col3.metric(
+        "Score",
+        f"{round(global_score, 2)} / {round(global_max_score, 2)}",
+    )
+    col4.metric("À corriger", global_manual_count)
+
+    st.progress(min(max(global_percentage / 100, 0), 1))
+    st.write(
+        f"**Parcours :** {len(filtered_attempts)} tentative(s) sélectionnée(s)"
+    )
+    st.caption(
+        "Le score global est pondéré par le nombre de questions corrigées "
+        "automatiquement sur l'ensemble des tentatives sélectionnées."
+    )
+
+    st.markdown("### Visualisation des résultats")
+    chart_col1, chart_col2 = st.columns(2)
+
+    with chart_col1:
+        st.markdown("#### Répartition des points obtenus")
+        render_pie_chart(global_domain_summary)
+
+    with chart_col2:
+        st.markdown("#### Radar par domaine")
+        render_radar_chart(global_domain_summary)
+
+    st.markdown("#### Compétences cognitives")
+    render_cognitive_bar_chart(global_cognitive_summary)
+
+    st.markdown("### Résultat par domaine")
+    render_domain_table(global_domain_summary)
+
+    st.markdown("### Pistes de travail personnalisées")
+    for item in global_improvement_plan:
+        st.warning(item)
+
     first_score = float(filtered_attempts[0].get("percentage") or 0)
     last_score = float(filtered_attempts[-1].get("percentage") or 0)
     best_score = max(float(item.get("percentage") or 0) for item in filtered_attempts)
     delta = round(last_score - first_score, 1)
 
+    st.markdown("### Progression dans le temps")
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("Tentatives", len(filtered_attempts))
     m2.metric("Premier score", f"{round(first_score, 1)}%")
     m3.metric("Dernier score", f"{round(last_score, 1)}%", delta=f"{delta:+.1f} pts")
     m4.metric("Meilleur score", f"{round(best_score, 1)}%")
 
-    st.markdown("### Progression globale")
     x_values = list(range(1, len(filtered_attempts) + 1))
     y_values = [float(item.get("percentage") or 0) for item in filtered_attempts]
 
@@ -1451,18 +1522,7 @@ def render_global_progress(
         })
     st.dataframe(journey_rows, width="stretch", hide_index=True)
 
-    st.markdown("### Maîtrise globale par domaine")
-    domain_rows = _progress_aggregate(filtered_rows, "domain")
-    if domain_rows:
-        visible_domain_rows = [
-            {k: v for k, v in row.items() if k != "_pct"}
-            for row in domain_rows
-        ]
-        st.dataframe(visible_domain_rows, width="stretch", hide_index=True)
-    else:
-        st.info("Aucune donnée de domaine disponible.")
-
-    st.markdown("### Maîtrise globale par sous-domaine")
+    st.markdown("### Résultat par sous-domaine")
     subdomain_rows = _progress_aggregate(filtered_rows, "subdomain")
     if subdomain_rows:
         visible_subdomain_rows = [

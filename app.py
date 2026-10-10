@@ -73,7 +73,7 @@ from utils.question_bank import (
     select_random_questions,
     select_random_questions_scoped,
 )
-from utils.question_schema import classify_question, summarize_audit
+from utils.question_schema import audit_action, classify_question, summarize_audit
 
 
 st.set_page_config(
@@ -2939,11 +2939,24 @@ def trainer_app() -> None:
                 "et les structures incomplètes avant toute migration."
             )
 
-            audit_include_inactive = st.checkbox(
-                "Inclure les questions inactives de la banque",
-                value=True,
-                key="schema_audit_include_inactive",
+            audit_scope = st.radio(
+                "Périmètre de l'audit",
+                ["CDPO actif", "Toute la base"],
+                horizontal=True,
+                key="schema_audit_scope",
             )
+            audit_include_inactive = audit_scope == "Toute la base"
+
+            if audit_scope == "CDPO actif":
+                st.info(
+                    "Mode recommandé : seules les questions actives CDPO et les quiz "
+                    "sauvegardés CDPO sont pris en compte pour préparer la migration."
+                )
+            else:
+                st.warning(
+                    "Toute la base inclut aussi l'ancienne banque civique inactive. "
+                    "Ce mode sert au diagnostic historique, pas à la migration CDPO."
+                )
 
             if st.button(
                 "Lancer l'audit complet",
@@ -2960,6 +2973,12 @@ def trainer_app() -> None:
                     audit_rows = []
 
                     for row in bank_records:
+                        if audit_scope == "CDPO actif":
+                            if not bool(row.get("is_active")):
+                                continue
+                            if str(row.get("training_scope") or "").strip().upper() != "CDPO":
+                                continue
+
                         question = row.get("question_json") or {}
                         audit = classify_question(question)
                         issues = list(audit.get("issues") or [])
@@ -2996,6 +3015,16 @@ def trainer_app() -> None:
                     for quiz_row in saved_records:
                         quiz = quiz_row.get("quiz_json") or {}
                         questions = quiz.get("questions") or []
+
+                        if audit_scope == "CDPO actif":
+                            title_is_cdpo = "CDPO" in str(quiz_row.get("title") or "").upper()
+                            has_cdpo_question = any(
+                                isinstance(q, dict)
+                                and str(q.get("training_scope") or "").strip().upper() == "CDPO"
+                                for q in questions
+                            )
+                            if not (title_is_cdpo or has_cdpo_question):
+                                continue
                         for index, question in enumerate(questions, start=1):
                             if not isinstance(question, dict):
                                 audit_rows.append({
@@ -3039,10 +3068,27 @@ def trainer_app() -> None:
                             })
 
                     summary = summarize_audit(audit_rows)
+                    reviewed_rows = [
+                        row for row in audit_rows if row.get("needs_review")
+                    ]
+                    action_counts = {}
+                    for row in reviewed_rows:
+                        action = audit_action(row)
+                        action_counts[action] = action_counts.get(action, 0) + 1
+
                     st.session_state.question_schema_audit = {
                         "rows": audit_rows,
                         "summary": summary,
-                        "bank_count": len(bank_records),
+                        "action_counts": action_counts,
+                        "scope": audit_scope,
+                        "bank_count": len([
+                            row for row in bank_records
+                            if audit_scope == "Toute la base"
+                            or (
+                                bool(row.get("is_active"))
+                                and str(row.get("training_scope") or "").strip().upper() == "CDPO"
+                            )
+                        ]),
                         "saved_quiz_count": len(saved_records),
                         "saved_question_count": sum(
                             len((row.get("quiz_json") or {}).get("questions") or [])
@@ -3059,6 +3105,10 @@ def trainer_app() -> None:
                     "Audit terminé en lecture seule : aucune question n'a été modifiée."
                 )
 
+                st.caption(
+                    f"Périmètre : {audit_result.get('scope') or 'non précisé'}"
+                )
+
                 m1, m2, m3, m4 = st.columns(4)
                 m1.metric("Occurrences auditées", summary.get("total", 0))
                 m2.metric("Banque", audit_result.get("bank_count", 0))
@@ -3067,6 +3117,25 @@ def trainer_app() -> None:
                     audit_result.get("saved_question_count", 0),
                 )
                 m4.metric("À revoir", summary.get("review_count", 0))
+
+                action_counts = audit_result.get("action_counts") or {}
+                st.markdown("#### Triage avant migration")
+                t1, t2, t3 = st.columns(3)
+                t1.metric(
+                    "Vert — candidat sûr",
+                    action_counts.get("safe_candidate", 0),
+                    help="Détection forte et structure suffisante. Rien n'est encore modifié.",
+                )
+                t2.metric(
+                    "Orange — à compléter",
+                    action_counts.get("needs_completion", 0),
+                    help="Le type est identifiable mais une donnée manque avant migration.",
+                )
+                t3.metric(
+                    "Rouge — revue humaine",
+                    action_counts.get("manual_review", 0),
+                    help="Question ambiguë ou confiance insuffisante : aucune correction automatique.",
+                )
 
                 st.markdown("#### Répartition détectée par type")
                 type_rows = [
@@ -3120,6 +3189,11 @@ def trainer_app() -> None:
                         "Type actuel": row.get("declared_type"),
                         "Type détecté": row.get("detected_type"),
                         "Confiance": row.get("confidence"),
+                        "Triage": {
+                            "safe_candidate": "Vert",
+                            "needs_completion": "Orange",
+                            "manual_review": "Rouge",
+                        }.get(audit_action(row), "Rouge"),
                         "Anomalies": " | ".join(row.get("issues") or []),
                         "Question": row.get("question_preview"),
                     })

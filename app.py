@@ -799,7 +799,12 @@ ORDERING_TYPES = {
 
 def is_ordering_type(qtype: Any) -> bool:
     normalized = normalize_answer(qtype).replace(" ", "_")
-    return normalized in ORDERING_TYPES
+    if normalized in ORDERING_TYPES:
+        return True
+    return any(
+        token in normalized
+        for token in ["ordering", "ordonn", "classement", "sequence", "sequencing", "ranking"]
+    )
 
 
 def extract_ordering_items(question: Dict[str, Any]) -> List[Dict[str, Any]]:

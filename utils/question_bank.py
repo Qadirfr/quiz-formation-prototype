@@ -1165,6 +1165,478 @@ def list_question_bank_records_for_audit(
     return result
 
 
+def _build_schema_audit_row_for_bank_record(row: Dict[str, Any]) -> Dict[str, Any]:
+    """Construit la même ligne d'audit que l'interface pour une question de banque."""
+    from utils.question_schema import audit_action, classify_question
+
+    question = row.get("question_json") or {}
+    audit = classify_question(question)
+    issues = list(audit.get("issues") or [])
+
+    db_type = str(row.get("question_type") or "")
+    detected_type = audit.get("detected_type") or "unknown"
+    if db_type and db_type != detected_type:
+        conflict = f"db_type_conflict:{db_type}->{detected_type}"
+        if conflict not in issues:
+            issues.append(conflict)
+
+    audit_row = {
+        "source_kind": "Banque",
+        "source_id": row.get("id"),
+        "source_title": row.get("source_quiz_title") or "",
+        "question_index": "",
+        "active": bool(row.get("is_active")),
+        "training_scope": row.get("training_scope") or "",
+        "question_set_type": row.get("question_set_type") or "",
+        "domain": row.get("domain") or "",
+        "subdomain": row.get("subdomain") or "",
+        "declared_type": audit.get("declared_type") or db_type,
+        "detected_type": detected_type,
+        "confidence": audit.get("confidence") or "",
+        "needs_review": bool(audit.get("needs_review")) or bool(issues),
+        "issues": issues,
+        "question_preview": audit.get("question_preview") or "",
+        "suggested_patch": audit.get("suggested_patch") or {},
+    }
+    audit_row["audit_action"] = audit_action(audit_row)
+    return audit_row
+
+
+def build_safe_cdpo_migration_preview(limit: int = 5000) -> Dict[str, Any]:
+    """Prépare une migration sûre en lecture seule pour la banque CDPO active.
+
+    La fonction ne retient que les questions réellement signalées à revoir,
+    classées comme safe_candidate par le moteur d'audit. Les quiz sauvegardés
+    ne sont jamais modifiés ici.
+    """
+    records = list_question_bank_records_for_audit(
+        include_inactive=False,
+        limit=limit,
+    )
+    hash_rows = _fetchall("SELECT id, question_hash FROM question_bank")
+    existing_hash_owner = {
+        str(row.get("question_hash") or ""): int(row.get("id"))
+        for row in hash_rows
+        if row.get("question_hash")
+    }
+
+    raw_candidates: List[Dict[str, Any]] = []
+    for row in records:
+        if not bool(row.get("is_active")):
+            continue
+        if str(row.get("training_scope") or "").strip().upper() != "CDPO":
+            continue
+
+        audit_row = _build_schema_audit_row_for_bank_record(row)
+        if not audit_row.get("needs_review"):
+            continue
+        if audit_row.get("audit_action") != "safe_candidate":
+            continue
+
+        question = dict(row.get("question_json") or {})
+        detected_type = str(audit_row.get("detected_type") or "")
+        if not detected_type:
+            continue
+
+        patch = dict(audit_row.get("suggested_patch") or {})
+        new_question = dict(question)
+        new_question.update(patch)
+        new_question["type"] = detected_type
+        new_question["schema_version"] = int(
+            new_question.get("schema_version") or 2
+        )
+
+        old_json_type = str(question.get("type") or "")
+        db_type = str(row.get("question_type") or "")
+        old_schema_version = question.get("schema_version")
+        if (
+            db_type == detected_type
+            and old_json_type == detected_type
+            and old_schema_version == 2
+        ):
+            continue
+
+        new_hash = make_question_hash(new_question)
+        raw_candidates.append({
+            "id": int(row.get("id")),
+            "source_quiz_title": row.get("source_quiz_title") or "",
+            "domain": row.get("domain") or "",
+            "subdomain": row.get("subdomain") or "",
+            "question_preview": audit_row.get("question_preview") or "",
+            "current_db_type": db_type,
+            "current_json_type": old_json_type,
+            "target_type": detected_type,
+            "issues": audit_row.get("issues") or [],
+            "current_hash": str(row.get("question_hash") or ""),
+            "new_hash": new_hash,
+            "_previous_question_json": question,
+            "_new_question_json": new_question,
+        })
+
+    new_hash_counts: Dict[str, int] = {}
+    for candidate in raw_candidates:
+        new_hash = candidate["new_hash"]
+        new_hash_counts[new_hash] = new_hash_counts.get(new_hash, 0) + 1
+
+    applicable: List[Dict[str, Any]] = []
+    blocked: List[Dict[str, Any]] = []
+    for candidate in raw_candidates:
+        owner = existing_hash_owner.get(candidate["new_hash"])
+        block_reason = ""
+        if owner is not None and owner != candidate["id"]:
+            block_reason = f"hash_conflict_with_question_{owner}"
+        elif new_hash_counts.get(candidate["new_hash"], 0) > 1:
+            block_reason = "duplicate_target_hash_in_migration"
+
+        public_candidate = {
+            key: value
+            for key, value in candidate.items()
+            if not key.startswith("_")
+        }
+        if block_reason:
+            public_candidate["blocked_reason"] = block_reason
+            blocked.append(public_candidate)
+        else:
+            applicable.append(candidate)
+
+    public_applicable = [
+        {
+            key: value
+            for key, value in candidate.items()
+            if not key.startswith("_")
+        }
+        for candidate in applicable
+    ]
+
+    return {
+        "scope": "CDPO actif - banque uniquement",
+        "candidate_count": len(public_applicable),
+        "blocked_count": len(blocked),
+        "candidates": public_applicable,
+        "blocked": blocked,
+    }
+
+
+def _ensure_question_schema_migration_log(conn: Any) -> None:
+    if _pg():
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS question_schema_migration_log (
+                    id bigserial PRIMARY KEY,
+                    migration_run_id text NOT NULL,
+                    question_id bigint NOT NULL,
+                    applied_at timestamptz NOT NULL DEFAULT now(),
+                    previous_question_type text,
+                    new_question_type text,
+                    previous_question_hash text,
+                    new_question_hash text,
+                    previous_question_json jsonb NOT NULL,
+                    new_question_json jsonb NOT NULL,
+                    UNIQUE (migration_run_id, question_id)
+                )
+            """)
+        return
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS question_schema_migration_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            migration_run_id TEXT NOT NULL,
+            question_id INTEGER NOT NULL,
+            applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            previous_question_type TEXT,
+            new_question_type TEXT,
+            previous_question_hash TEXT,
+            new_question_hash TEXT,
+            previous_question_json TEXT NOT NULL,
+            new_question_json TEXT NOT NULL,
+            UNIQUE (migration_run_id, question_id)
+        )
+    """)
+
+
+def apply_safe_cdpo_question_migration(
+    question_ids: List[int],
+) -> Dict[str, Any]:
+    """Applique une migration atomique des candidats sûrs CDPO.
+
+    Un journal complet avant/après est créé dans question_schema_migration_log
+    avant toute modification. Si une question n'est plus éligible au moment
+    du clic, l'opération entière est annulée.
+    """
+    import uuid
+    from datetime import datetime, timezone
+
+    requested_ids = sorted({int(value) for value in question_ids})
+    if not requested_ids:
+        return {
+            "applied": 0,
+            "migration_run_id": "",
+            "question_ids": [],
+        }
+
+    fresh_preview = build_safe_cdpo_migration_preview(limit=5000)
+    candidates_by_id: Dict[int, Dict[str, Any]] = {}
+
+    # Reconstitue les objets complets après la prévisualisation publique.
+    records = {
+        int(row.get("id")): row
+        for row in list_question_bank_records_for_audit(
+            include_inactive=False,
+            limit=5000,
+        )
+        if row.get("id") is not None
+    }
+
+    for public_candidate in fresh_preview.get("candidates") or []:
+        qid = int(public_candidate["id"])
+        row = records.get(qid)
+        if not row:
+            continue
+
+        audit_row = _build_schema_audit_row_for_bank_record(row)
+        question = dict(row.get("question_json") or {})
+        new_question = dict(question)
+        new_question.update(dict(audit_row.get("suggested_patch") or {}))
+        new_question["type"] = str(audit_row.get("detected_type") or "")
+        new_question["schema_version"] = 2
+
+        candidates_by_id[qid] = {
+            "id": qid,
+            "previous_question_type": str(row.get("question_type") or ""),
+            "new_question_type": str(audit_row.get("detected_type") or ""),
+            "previous_question_hash": str(row.get("question_hash") or ""),
+            "new_question_hash": make_question_hash(new_question),
+            "previous_question_json": question,
+            "new_question_json": new_question,
+        }
+
+    missing = [
+        qid for qid in requested_ids
+        if qid not in candidates_by_id
+    ]
+    if missing:
+        raise ValueError(
+            "Migration annulée : certaines questions ne sont plus "
+            f"éligibles à la migration sûre : {missing}"
+        )
+
+    migration_run_id = (
+        "schema-v2-"
+        + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        + "-"
+        + uuid.uuid4().hex[:8]
+    )
+
+    with get_connection() as conn:
+        try:
+            _ensure_question_schema_migration_log(conn)
+
+            if _pg():
+                with conn.cursor() as cur:
+                    for qid in requested_ids:
+                        candidate = candidates_by_id[qid]
+                        cur.execute(
+                            """
+                            SELECT
+                                question_type,
+                                question_hash,
+                                question_json,
+                                is_active,
+                                training_scope
+                            FROM question_bank
+                            WHERE id = %s
+                            FOR UPDATE
+                            """,
+                            (qid,),
+                        )
+                        current = cur.fetchone()
+                        if not current:
+                            raise ValueError(
+                                f"Question {qid} introuvable pendant la migration."
+                            )
+                        current = _row(current)
+                        if not bool(current.get("is_active")):
+                            raise ValueError(
+                                f"Question {qid} n'est plus active."
+                            )
+                        if str(current.get("training_scope") or "").strip().upper() != "CDPO":
+                            raise ValueError(
+                                f"Question {qid} n'appartient plus au périmètre CDPO."
+                            )
+                        if str(current.get("question_hash") or "") != candidate["previous_question_hash"]:
+                            raise ValueError(
+                                f"Question {qid} a changé depuis la prévisualisation."
+                            )
+
+                        cur.execute(
+                            """
+                            INSERT INTO question_schema_migration_log (
+                                migration_run_id,
+                                question_id,
+                                previous_question_type,
+                                new_question_type,
+                                previous_question_hash,
+                                new_question_hash,
+                                previous_question_json,
+                                new_question_json
+                            )
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                            """,
+                            (
+                                migration_run_id,
+                                qid,
+                                candidate["previous_question_type"],
+                                candidate["new_question_type"],
+                                candidate["previous_question_hash"],
+                                candidate["new_question_hash"],
+                                _json_db(candidate["previous_question_json"]),
+                                _json_db(candidate["new_question_json"]),
+                            ),
+                        )
+                        cur.execute(
+                            """
+                            UPDATE question_bank
+                            SET
+                                question_type = %s,
+                                question_hash = %s,
+                                question_json = %s
+                            WHERE id = %s
+                            """,
+                            (
+                                candidate["new_question_type"],
+                                candidate["new_question_hash"],
+                                _json_db(candidate["new_question_json"]),
+                                qid,
+                            ),
+                        )
+            else:
+                for qid in requested_ids:
+                    candidate = candidates_by_id[qid]
+                    current = conn.execute(
+                        """
+                        SELECT
+                            question_type,
+                            question_hash,
+                            question_json,
+                            is_active,
+                            training_scope
+                        FROM question_bank
+                        WHERE id = ?
+                        """,
+                        (qid,),
+                    ).fetchone()
+                    if not current:
+                        raise ValueError(
+                            f"Question {qid} introuvable pendant la migration."
+                        )
+                    current = _row(current)
+                    if not bool(current.get("is_active")):
+                        raise ValueError(
+                            f"Question {qid} n'est plus active."
+                        )
+                    if str(current.get("training_scope") or "").strip().upper() != "CDPO":
+                        raise ValueError(
+                            f"Question {qid} n'appartient plus au périmètre CDPO."
+                        )
+                    if str(current.get("question_hash") or "") != candidate["previous_question_hash"]:
+                        raise ValueError(
+                            f"Question {qid} a changé depuis la prévisualisation."
+                        )
+
+                    conn.execute(
+                        """
+                        INSERT INTO question_schema_migration_log (
+                            migration_run_id,
+                            question_id,
+                            previous_question_type,
+                            new_question_type,
+                            previous_question_hash,
+                            new_question_hash,
+                            previous_question_json,
+                            new_question_json
+                        )
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            migration_run_id,
+                            qid,
+                            candidate["previous_question_type"],
+                            candidate["new_question_type"],
+                            candidate["previous_question_hash"],
+                            candidate["new_question_hash"],
+                            _json_db(candidate["previous_question_json"]),
+                            _json_db(candidate["new_question_json"]),
+                        ),
+                    )
+                    conn.execute(
+                        """
+                        UPDATE question_bank
+                        SET
+                            question_type = ?,
+                            question_hash = ?,
+                            question_json = ?
+                        WHERE id = ?
+                        """,
+                        (
+                            candidate["new_question_type"],
+                            candidate["new_question_hash"],
+                            _json_db(candidate["new_question_json"]),
+                            qid,
+                        ),
+                    )
+
+            conn.commit()
+        except Exception:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            raise
+
+    return {
+        "applied": len(requested_ids),
+        "migration_run_id": migration_run_id,
+        "question_ids": requested_ids,
+    }
+
+
+def list_question_schema_migration_log(
+    migration_run_id: str = "",
+    limit: int = 500,
+) -> List[Dict[str, Any]]:
+    """Retourne le journal des sauvegardes de migration."""
+    placeholder = "%s" if _pg() else "?"
+    params: List[Any] = []
+    where = ""
+    if migration_run_id:
+        where = f"WHERE migration_run_id = {placeholder}"
+        params.append(migration_run_id)
+    params.append(int(limit))
+
+    try:
+        rows = _fetchall(
+            f"""
+            SELECT
+                migration_run_id,
+                question_id,
+                applied_at,
+                previous_question_type,
+                new_question_type,
+                previous_question_hash,
+                new_question_hash
+            FROM question_schema_migration_log
+            {where}
+            ORDER BY id DESC
+            LIMIT {placeholder}
+            """,
+            tuple(params),
+        )
+    except Exception:
+        return []
+
+    return rows
+
+
 def _v23_add_filter(where, params, field, value, placeholder, empty_label=None):
     if not value or value == "Tous":
         return

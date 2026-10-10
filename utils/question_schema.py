@@ -237,20 +237,74 @@ def classify_question(question: Dict[str, Any]) -> Dict[str, Any]:
         confidence = "high"
         reasons.append("consigne de priorisation avec arbitrage détectée")
 
-    elif isinstance(pairs, list) and pairs:
-        detected = "matching"
-        confidence = "high"
-        reasons.append("paires structurées détectées")
-
-    elif _looks_true_false(options):
+    elif _has_any(normalized, [
+        "vrai ou faux",
+        "true or false",
+    ]) or _looks_true_false(options):
         detected = "true_false"
         confidence = "high"
-        reasons.append("options vrai/faux détectées")
+        reasons.append("consigne ou options vrai/faux détectées")
+
+    elif _has_any(normalized, [
+        "associez",
+        "associer",
+        "reliez",
+        "relier",
+        "appariez",
+        "apparier",
+        "faites correspondre",
+    ]):
+        detected = "matching"
+        confidence = "high"
+        reasons.append("consigne explicite d'appariement détectée")
+
+    elif declared == "single_choice" and isinstance(options, list) and len(options) >= 2:
+        detected = "single_choice"
+        confidence = "high"
+        reasons.append("QCM déclaré avec options structurées conservé")
+
+    elif declared == "matching" and isinstance(pairs, list) and pairs:
+        detected = "matching"
+        confidence = "high"
+        reasons.append("appariement déclaré avec paires structurées")
 
     elif isinstance(options, list) and len(options) >= 2:
         detected = "single_choice"
         confidence = "high"
         reasons.append("plusieurs options structurées détectées")
+
+    elif isinstance(pairs, list) and pairs:
+        detected = "matching"
+        confidence = "medium"
+        reasons.append("paires structurées détectées sans consigne explicite")
+
+    elif declared == "short_answer":
+        detected = "short_answer"
+        confidence = "high"
+        reasons.append("réponse courte déclarée conservée")
+
+    elif declared == "long_answer":
+        detected = "long_answer"
+        confidence = "high"
+        reasons.append("réponse rédigée déclarée conservée")
+
+    elif _has_any(normalized, [
+        "en trois mots",
+        "en un mot",
+        "indiquez le delai",
+        "quel est le delai",
+        "en heures",
+        "en jours",
+        "citez un",
+        "citez une",
+        "nommez un",
+        "nommez une",
+        "donnez un exemple",
+        "donnez une valeur",
+    ]):
+        detected = "short_answer"
+        confidence = "medium"
+        reasons.append("consigne de réponse courte détectée")
 
     elif _has_any(normalized, [
         "redigez",
@@ -259,7 +313,10 @@ def classify_question(question: Dict[str, Any]) -> Dict[str, Any]:
         "justifiez votre reponse",
         "developpez",
         "proposez une recommandation",
+        "formulez un constat",
         "expliquez en detail",
+        "quelles informations",
+        "quelle question poseriez vous",
     ]):
         detected = "long_answer"
         confidence = "medium"
@@ -367,6 +424,42 @@ def classify_question(question: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def audit_action(row: Dict[str, Any]) -> str:
+    """Classe une occurrence pour préparer une migration contrôlée."""
+    detected = row.get("detected_type") or "unknown"
+    confidence = row.get("confidence") or "low"
+    issues = set(row.get("issues") or [])
+
+    if detected == "unknown" or confidence == "low":
+        return "manual_review"
+
+    blocking_completion = {
+        "missing_total_points",
+        "missing_ranking_mode",
+        "missing_grading_rubric",
+        "unstructured_fill_blank_correction",
+        "missing_ordering_correction",
+        "missing_matching_pairs",
+        "missing_correct_answer",
+        "missing_options",
+    }
+    if issues.intersection(blocking_completion):
+        return "needs_completion"
+
+    if confidence == "high" and detected in {
+        "single_choice",
+        "true_false",
+        "matching",
+        "ordering",
+        "fill_blank",
+        "self_assessment",
+        "short_answer",
+    }:
+        return "safe_candidate"
+
+    return "manual_review"
+
+
 def summarize_audit(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
     types = Counter(row.get("detected_type") or "unknown" for row in rows)
     confidence = Counter(row.get("confidence") or "unknown" for row in rows)
@@ -375,6 +468,7 @@ def summarize_audit(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
         for row in rows
         for issue in (row.get("issues") or [])
     )
+    actions = Counter(audit_action(row) for row in rows)
     review_count = sum(1 for row in rows if row.get("needs_review"))
 
     return {
@@ -384,4 +478,5 @@ def summarize_audit(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
         "by_type": dict(types),
         "by_confidence": dict(confidence),
         "by_issue": dict(issues),
+        "by_action": dict(actions),
     }

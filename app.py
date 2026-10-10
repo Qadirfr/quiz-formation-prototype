@@ -2251,21 +2251,6 @@ def learner_app() -> None:
         if st.button("Déconnexion", key="qa_v22_13_nav_logout", width="stretch"):
             logout()
 
-    qa_progress_attempts = []
-    try:
-        qa_progress_attempts = get_attempts_for_learner_email(learner_identifier, limit=100) if learner_identifier != "-" else []
-    except Exception:
-        qa_progress_attempts = []
-
-    qa_percentages = []
-    for qa_attempt in qa_progress_attempts or []:
-        try:
-            qa_percentages.append(float(qa_attempt.get("percentage") or 0))
-        except Exception:
-            pass
-
-    qa_best_score = "—" if not qa_percentages else f"{round(max(qa_percentages), 1)}%"
-    qa_last_score = "—" if not qa_percentages else f"{round(qa_percentages[0], 1)}%"
 
     qa_top_left, qa_top_right = st.columns([0.72, 0.28])
     with qa_top_left:
@@ -2304,15 +2289,30 @@ def learner_app() -> None:
 
     if learner_page == "Passer un quiz / s’entraîner":
         st.subheader("Choisir et passer un quiz")
+        st.caption(
+            "Pour préserver la fluidité, l’application ne charge que le mode choisi. "
+            "Le mode Quiz préparé est recommandé pour les examens et formations."
+        )
 
-        # V23 : ancien mode autonome V19 d?sactiv?.
-        # Le bloc d'entra?nement banque V23 utilise d?sormais training_scope et question_set_type.
+        learner_modes = ["Quiz préparé", "Banque de questions", "Session dirigée"]
+        default_mode_index = 2 if st.session_state.get("active_directed_session_id") else 0
+        learner_mode = st.radio(
+            "Mode d’entraînement",
+            learner_modes,
+            index=default_mode_index,
+            horizontal=True,
+            key="learner_training_mode_v23_perf",
+        )
+        _learner_mode_started = time.perf_counter()
 
-
-        with st.expander("Rejoindre une session dirigée par le formateur", expanded=True):
+        if learner_mode == "Session dirigée":
+            st.markdown("### Session dirigée")
             st.caption("Utilise ce mode si le formateur pilote les questions en direct.")
 
-            session_code_input = st.text_input("Code session", key="learner_directed_session_code").upper()
+            session_code_input = st.text_input(
+                "Code session",
+                key="learner_directed_session_code",
+            ).upper()
 
             if st.button("Rejoindre la session", type="primary", width="stretch"):
                 session = get_training_session_by_code(session_code_input)
@@ -2331,24 +2331,17 @@ def learner_app() -> None:
             active_participant_id = st.session_state.get("active_directed_participant_id")
 
             if active_session_id and active_participant_id:
-                st.caption("Session dirigée : l’actualisation automatique est désactivée par défaut pour éviter de couper la saisie.")
+                st.caption(
+                    "Session dirigée : l’actualisation automatique est désactivée "
+                    "pour éviter de couper la saisie."
+                )
 
-                refresh_col1, refresh_col2 = st.columns([1, 2])
-                with refresh_col1:
-                    if st.button("Actualiser maintenant", width="stretch", key=f"manual_refresh_directed_session_{active_session_id}"):
-                        st.rerun()
-                with refresh_col2:
-                    auto_refresh = st.checkbox(
-                        "Actualisation automatique lente, toutes les 15 secondes",
-                        value=False,
-                        key=f"auto_refresh_directed_session_{active_session_id}",
-                    )
-
-                if False and st_autorefresh is not None:
-                    # V20.5 disabled: st_autorefresh removed
-                    pass
-                elif False and st_autorefresh is None:
-                    st.info("Actualisation automatique indisponible : utilise le bouton Actualiser maintenant.")
+                if st.button(
+                    "Actualiser maintenant",
+                    width="stretch",
+                    key=f"manual_refresh_directed_session_{active_session_id}",
+                ):
+                    st.rerun()
 
                 session = get_training_session(active_session_id)
                 if not session:
@@ -2362,26 +2355,46 @@ def learner_app() -> None:
                     if not questions:
                         st.warning("Aucune question dans cette session.")
                     else:
-                        current_index = max(0, min(int(session.get("current_question_index") or 0), len(questions) - 1))
+                        current_index = max(
+                            0,
+                            min(
+                                int(session.get("current_question_index") or 0),
+                                len(questions) - 1,
+                            ),
+                        )
                         current_question_number = current_index + 1
                         current_question = questions[current_index]
 
-                        existing_answer = get_session_answer(session["id"], active_participant_id, current_question_number)
+                        existing_answer = get_session_answer(
+                            session["id"],
+                            active_participant_id,
+                            current_question_number,
+                        )
 
                         st.markdown("---")
                         st.markdown(f"## Session : {session['title']}")
                         st.caption(f"Question {current_question_number} / {len(questions)}")
 
                         if existing_answer:
-                            st.success("Réponse enregistrée. Attends la correction ou la question suivante du formateur.")
+                            st.success(
+                                "Réponse enregistrée. Attends la correction ou la question suivante du formateur."
+                            )
                             if session.get("show_correction"):
                                 render_session_correction(existing_answer, current_question)
                             else:
                                 st.info("Correction masquée pour le moment.")
                         else:
-                            with st.form(f"session_question_form_{session['id']}_{current_question_number}"):
-                                user_answer = render_session_question(current_question, current_question_number, session["id"])
-                                submitted_session_answer = st.form_submit_button("Valider ma réponse")
+                            with st.form(
+                                f"session_question_form_{session['id']}_{current_question_number}"
+                            ):
+                                user_answer = render_session_question(
+                                    current_question,
+                                    current_question_number,
+                                    session["id"],
+                                )
+                                submitted_session_answer = st.form_submit_button(
+                                    "Valider ma réponse"
+                                )
 
                             if submitted_session_answer:
                                 evaluation = evaluate_answer(current_question, user_answer)
@@ -2398,13 +2411,15 @@ def learner_app() -> None:
                                     selected_feedback=evaluation.get("selected_feedback", ""),
                                     correct_feedback=evaluation.get("correct_feedback", ""),
                                 )
-                                st.success("Réponse enregistrée. Attends que le formateur affiche la correction ou passe à la question suivante.")
+                                st.success(
+                                    "Réponse enregistrée. Attends que le formateur affiche "
+                                    "la correction ou passe à la question suivante."
+                                )
                                 st.rerun()
 
-        st.markdown("### Entraînement individuel")
+        elif learner_mode == "Banque de questions":
+            st.markdown("### Entraînement depuis la banque")
 
-
-        with st.expander("Démarrer un examen ou entraînement depuis la banque de questions", expanded=True):
             stats = get_question_bank_stats()
             st.caption(f"Banque disponible : {stats['total']} question(s).")
 
@@ -2464,17 +2479,34 @@ def learner_app() -> None:
                 )
 
             if st.button("Démarrer depuis la banque", type="primary", width="stretch"):
-                training_scope_filter = "" if learner_bank_training_scope == "Tous" else learner_bank_training_scope
-                question_set_type_filter = "" if learner_bank_question_set_type == "Tous" else learner_bank_question_set_type
-                domain_filter = "" if learner_bank_domain == "Tous" else learner_bank_domain
-                subdomain_filter = "" if learner_bank_subdomain == "Tous" else learner_bank_subdomain
-                difficulty_filter = "" if learner_bank_difficulty == "Tous" else learner_bank_difficulty
+                training_scope_filter = (
+                    "" if learner_bank_training_scope == "Tous"
+                    else learner_bank_training_scope
+                )
+                question_set_type_filter = (
+                    "" if learner_bank_question_set_type == "Tous"
+                    else learner_bank_question_set_type
+                )
+                domain_filter = (
+                    "" if learner_bank_domain == "Tous"
+                    else learner_bank_domain
+                )
+                subdomain_filter = (
+                    "" if learner_bank_subdomain == "Tous"
+                    else learner_bank_subdomain
+                )
+                difficulty_filter = (
+                    "" if learner_bank_difficulty == "Tous"
+                    else learner_bank_difficulty
+                )
 
-                has_scope_filter = any([
-                    training_scope_filter,
-                    question_set_type_filter,
-                    subdomain_filter,
-                ])
+                has_scope_filter = any(
+                    [
+                        training_scope_filter,
+                        question_set_type_filter,
+                        subdomain_filter,
+                    ]
+                )
 
                 if learner_bank_mode == "Adaptatif selon mes erreurs" and not has_scope_filter:
                     selected_questions = select_adaptive_questions(
@@ -2484,10 +2516,16 @@ def learner_app() -> None:
                         difficulty=difficulty_filter,
                     )
                     mode_key = "adaptive"
-                    title = f"Entraînement adaptatif - {int(learner_bank_count)} questions"
+                    title = (
+                        f"Entraînement adaptatif - {int(learner_bank_count)} questions"
+                    )
                 else:
                     if learner_bank_mode == "Adaptatif selon mes erreurs" and has_scope_filter:
-                        st.info("Le mode adaptatif est limité aux filtres Domaine/Niveau. Avec une formation, un type ou un sous-domaine choisi, le tirage est aléatoire filtré.")
+                        st.info(
+                            "Le mode adaptatif est limité aux filtres Domaine/Niveau. "
+                            "Avec une formation, un type ou un sous-domaine choisi, "
+                            "le tirage est aléatoire filtré."
+                        )
                     selected_questions = select_random_questions_scoped(
                         limit=int(learner_bank_count),
                         training_scope=training_scope_filter,
@@ -2497,7 +2535,10 @@ def learner_app() -> None:
                         difficulty=difficulty_filter,
                     )
                     mode_key = "random"
-                    title = f"Entraînement depuis la banque - {int(learner_bank_count)} questions"
+                    title = (
+                        f"Entraînement depuis la banque - "
+                        f"{int(learner_bank_count)} questions"
+                    )
 
                 if not selected_questions:
                     st.warning("Aucune question disponible dans la banque avec ces critères.")
@@ -2516,42 +2557,51 @@ def learner_app() -> None:
                     st.session_state.active_attempt_id = attempt_id
                     st.session_state.active_quiz_for_test = active_quiz
                     st.session_state.last_completed_attempt_id = None
-                    st.success("Quiz démarré depuis la banque. Réponds aux questions ci-dessous.")
+                    st.success(
+                        "Quiz démarré depuis la banque. Réponds aux questions ci-dessous."
+                    )
 
-        st.markdown("### Ou choisir un quiz sauvegardé")
+        else:
+            st.markdown("### Quiz préparé")
+            st.caption(
+                "Choisis un quiz déjà préparé par le formateur. "
+                "Ce mode évite de charger la banque de questions et les sessions en direct."
+            )
 
-        saved_quizzes = list_saved_quizzes()
-        if not saved_quizzes:
-            st.warning("Aucun quiz disponible pour le moment.")
-            return
-
-        labels = []
-        for row in saved_quizzes:
-            module = f" | {row['module']}" if row.get("module") else ""
-            labels.append(f"#{row['id']} | {row['title']}{module} | {row['question_count']} questions")
-
-        selected_index = st.selectbox(
-            "Quiz disponible",
-            options=list(range(len(saved_quizzes))),
-            format_func=lambda i: labels[i],
-            key="learner_quiz_select",
-        )
-        selected = saved_quizzes[selected_index]
-
-        if st.button("Démarrer ce quiz", type="primary", width="stretch"):
-            loaded_quiz = load_quiz(selected["id"])
-            if loaded_quiz is None:
-                st.error("Quiz introuvable.")
+            saved_quizzes = list_saved_quizzes()
+            if not saved_quizzes:
+                st.warning("Aucun quiz disponible pour le moment.")
             else:
-                attempt_id = start_attempt(
-                    learner_id=learner["id"],
-                    quiz_id=selected["id"],
-                    quiz_title=selected["title"],
+                labels = []
+                for row in saved_quizzes:
+                    module = f" | {row['module']}" if row.get("module") else ""
+                    labels.append(
+                        f"#{row['id']} | {row['title']}{module} | "
+                        f"{row['question_count']} questions"
+                    )
+
+                selected_index = st.selectbox(
+                    "Quiz disponible",
+                    options=list(range(len(saved_quizzes))),
+                    format_func=lambda i: labels[i],
+                    key="learner_quiz_select",
                 )
-                st.session_state.active_attempt_id = attempt_id
-                st.session_state.active_quiz_for_test = loaded_quiz
-                st.session_state.last_completed_attempt_id = None
-                st.success("Quiz démarré. Réponds aux questions ci-dessous.")
+                selected = saved_quizzes[selected_index]
+
+                if st.button("Démarrer ce quiz", type="primary", width="stretch"):
+                    loaded_quiz = load_quiz(selected["id"])
+                    if loaded_quiz is None:
+                        st.error("Quiz introuvable.")
+                    else:
+                        attempt_id = start_attempt(
+                            learner_id=learner["id"],
+                            quiz_id=selected["id"],
+                            quiz_title=selected["title"],
+                        )
+                        st.session_state.active_attempt_id = attempt_id
+                        st.session_state.active_quiz_for_test = loaded_quiz
+                        st.session_state.last_completed_attempt_id = None
+                        st.success("Quiz démarré. Réponds aux questions ci-dessous.")
 
         active_quiz = st.session_state.active_quiz_for_test
         attempt_id = st.session_state.active_attempt_id
@@ -2599,7 +2649,11 @@ def learner_app() -> None:
                         correct_feedback=evaluation.get("correct_feedback", ""),
                     )
 
-                percentage = round((total_score / max_score) * 100, 1) if max_score else 0.0
+                percentage = (
+                    round((total_score / max_score) * 100, 1)
+                    if max_score
+                    else 0.0
+                )
                 recommended_level = recommendation_from_percentage(percentage)
                 finish_attempt(
                     attempt_id=attempt_id,
@@ -2615,9 +2669,22 @@ def learner_app() -> None:
                 st.session_state.active_quiz_for_test = None
 
                 st.success("Quiz terminé. Voici ta restitution.")
-                current_attempt = get_attempts_for_learner_email(learner["email"], limit=1)[0]
+                current_attempt = get_attempts_for_learner_email(
+                    learner["email"],
+                    limit=1,
+                )[0]
                 details = get_attempt_answers(attempt_id)
-                render_attempt_report(current_attempt, details, show_learner=False)
+                render_attempt_report(
+                    current_attempt,
+                    details,
+                    show_learner=False,
+                )
+
+        print(
+            f"[PERF][LEARNER_MODE] mode={learner_mode} "
+            f"total={time.perf_counter() - _learner_mode_started:.3f}s",
+            flush=True,
+        )
 
     if learner_page == "Mes résultats et restitutions":
         st.subheader("Mes résultats et restitutions")

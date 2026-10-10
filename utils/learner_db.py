@@ -382,6 +382,88 @@ def get_attempts_for_learner_email(email: str, limit: int = 100) -> List[Dict[st
     return _attempts(where, (clean_email,), limit)
 
 
+def get_progress_answers_for_learner_email(
+    email: str,
+    limit: int = 5000,
+) -> List[Dict[str, Any]]:
+    """Retourne les réponses de toutes les tentatives terminées d'un apprenant.
+
+    Une seule requête est utilisée afin d'éviter un aller-retour base par tentative
+    lors de la construction de la vue globale de progression.
+    """
+    init_learner_db()
+    clean_email = email.strip().lower()
+    if not clean_email:
+        return []
+
+    if _pg():
+        sql = """
+            SELECT
+                qa.id AS attempt_id,
+                qa.quiz_id,
+                qa.quiz_title,
+                qa.started_at,
+                qa.finished_at,
+                qa.percentage::float AS attempt_percentage,
+                la.question_index,
+                la.question_type,
+                la.is_correct,
+                la.score::float AS score,
+                la.domain,
+                la.subdomain,
+                la.learning_objective,
+                la.concept_evaluated,
+                la.cognitive_level,
+                la.competency
+            FROM quiz_attempts qa
+            JOIN learners l ON l.id = qa.learner_id
+            JOIN learner_answers la ON la.attempt_id = qa.id
+            WHERE lower(l.email) = %s
+              AND qa.finished_at IS NOT NULL
+            ORDER BY qa.started_at ASC, qa.id ASC, la.question_index ASC
+            LIMIT %s
+        """
+        rows = _fetchall(sql, (clean_email, int(limit)))
+    else:
+        sql = """
+            SELECT
+                qa.id AS attempt_id,
+                qa.quiz_id,
+                qa.quiz_title,
+                qa.started_at,
+                qa.finished_at,
+                qa.percentage AS attempt_percentage,
+                la.question_index,
+                la.question_type,
+                la.is_correct,
+                la.score,
+                la.domain,
+                la.subdomain,
+                la.learning_objective,
+                la.concept_evaluated,
+                la.cognitive_level,
+                la.competency
+            FROM quiz_attempts qa
+            JOIN learners l ON l.id = qa.learner_id
+            JOIN learner_answers la ON la.attempt_id = qa.id
+            WHERE lower(l.email) = ?
+              AND qa.finished_at IS NOT NULL
+            ORDER BY datetime(qa.started_at) ASC, qa.id ASC, la.question_index ASC
+            LIMIT ?
+        """
+        rows = _fetchall(sql, (clean_email, int(limit)))
+
+    for item in rows:
+        if item.get("is_correct") is not None:
+            item["is_correct"] = bool(item["is_correct"])
+        try:
+            item["score"] = float(item.get("score") or 0)
+        except Exception:
+            item["score"] = 0.0
+
+    return rows
+
+
 def get_attempt_answers(attempt_id: int) -> List[Dict[str, Any]]:
     init_learner_db()
     if _pg():

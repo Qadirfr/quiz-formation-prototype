@@ -922,6 +922,196 @@ def self_assessment_prompt_text(question: Dict[str, Any]) -> str:
     return text
 
 
+FILL_BLANK_TYPES = {
+    "fill_blank",
+    "fill_in_blank",
+    "fill_in_the_blank",
+    "cloze",
+    "texte_a_trous",
+    "question_a_trous",
+    "completion",
+}
+
+
+def is_fill_blank_question(question: Dict[str, Any]) -> bool:
+    qtype = normalize_answer(question.get("type", "")).replace(" ", "_")
+    if qtype in FILL_BLANK_TYPES:
+        return True
+
+    text = str(question.get("question") or "")
+    return bool(re.search(r"\[\s*(?:\.\.\.|…+)\s*\]", text))
+
+
+def fill_blank_count(question: Dict[str, Any]) -> int:
+    text = str(question.get("question") or "")
+    return len(re.findall(r"\[\s*(?:\.\.\.|…+)\s*\]", text))
+
+
+def fill_blank_prompt_text(question: Dict[str, Any]) -> str:
+    text = str(question.get("question") or "")
+    counter = {"value": 0}
+
+    def repl(_match: Any) -> str:
+        counter["value"] += 1
+        return f"**[{counter['value']}]**"
+
+    return re.sub(r"\[\s*(?:\.\.\.|…+)\s*\]", repl, text)
+
+
+def _split_fill_blank_answer(value: Any, count: int) -> List[str]:
+    if isinstance(value, list):
+        return [str(item).strip() for item in value]
+    if isinstance(value, dict):
+        result = []
+        for index in range(1, count + 1):
+            result.append(str(value.get(str(index), value.get(index, ""))).strip())
+        return result
+
+    text = str(value or "").strip()
+    if not text:
+        return []
+
+    parts = [part.strip() for part in re.split(r"\s*[|;]\s*", text) if part.strip()]
+    if len(parts) == count:
+        return parts
+    return [text]
+
+
+def get_fill_blank_expected(
+    question: Dict[str, Any],
+    count: int,
+) -> List[List[str]]:
+    if count <= 0:
+        return []
+
+    structured = question.get("blanks")
+    if isinstance(structured, list) and len(structured) == count:
+        expected: List[List[str]] = []
+        for item in structured:
+            alternatives: List[str] = []
+            if isinstance(item, dict):
+                primary = item.get("correct_answer") or item.get("answer") or item.get("value")
+                if primary:
+                    alternatives.append(str(primary).strip())
+                accepted = item.get("accepted_answers") or item.get("accepted") or []
+                if isinstance(accepted, str):
+                    accepted = [
+                        part.strip()
+                        for part in re.split(r"\s*[|;]\s*", accepted)
+                        if part.strip()
+                    ]
+                if isinstance(accepted, list):
+                    alternatives.extend(
+                        str(part).strip() for part in accepted if str(part).strip()
+                    )
+            elif str(item).strip():
+                alternatives.append(str(item).strip())
+            expected.append(list(dict.fromkeys(alternatives)))
+        if all(expected):
+            return expected
+
+    correct_answers = question.get("correct_answers")
+    if isinstance(correct_answers, list) and len(correct_answers) == count:
+        return [[str(item).strip()] for item in correct_answers if str(item).strip()]
+
+    correct_parts = _split_fill_blank_answer(
+        question.get("correct_answer", ""),
+        count,
+    )
+    if len(correct_parts) == count:
+        return [[part] for part in correct_parts]
+
+    accepted = question.get("accepted_answers") or []
+    if isinstance(accepted, list) and len(accepted) == count:
+        return [[str(item).strip()] for item in accepted if str(item).strip()]
+
+    return []
+
+
+def evaluate_fill_blank(
+    question: Dict[str, Any],
+    user_answer: Any,
+) -> Dict[str, Any]:
+    count = fill_blank_count(question)
+    given = _split_fill_blank_answer(user_answer, count)
+    expected = get_fill_blank_expected(question, count)
+
+    if count <= 0:
+        return {
+            "score": 0.0,
+            "is_correct": None,
+            "correct_answer": question.get("correct_answer", ""),
+            "selected_feedback": "Question à trous enregistrée pour correction manuelle.",
+            "correct_feedback": question.get("explanation", ""),
+        }
+
+    if len(given) < count:
+        given = given + [""] * (count - len(given))
+
+    if not expected or len(expected) != count:
+        return {
+            "score": 0.0,
+            "is_correct": None,
+            "correct_answer": question.get("correct_answer", ""),
+            "selected_feedback": (
+                "Réponses enregistrées. La correction de cette ancienne question à trous "
+                "n’est pas assez structurée pour une correction automatique fiable."
+            ),
+            "correct_feedback": (
+                question.get("explanation", "")
+                or "Correction manuelle requise pour cette question."
+            ),
+        }
+
+    correct_flags = []
+    for index in range(count):
+        user_norm = normalize_answer(given[index])
+        alternatives = [
+            normalize_answer(value)
+            for value in expected[index]
+            if normalize_answer(value)
+        ]
+        correct_flags.append(bool(user_norm) and user_norm in alternatives)
+
+    correct_count = sum(1 for flag in correct_flags if flag)
+    score = correct_count / count if count else 0.0
+    is_ok = correct_count == count
+
+    if is_ok:
+        selected_feedback = "Tous les champs sont correctement complétés."
+    else:
+        errors = []
+        for index, flag in enumerate(correct_flags, start=1):
+            if not flag:
+                expected_text = " / ".join(expected[index - 1])
+                errors.append(
+                    f"[{index}] attendu : {expected_text}"
+                )
+        selected_feedback = (
+            f"{correct_count} trou(s) sur {count} correct(s). "
+            + " ; ".join(errors)
+        )
+
+    correct_feedback = "Réponses attendues : " + " | ".join(
+        f"[{index}] {' / '.join(values)}"
+        for index, values in enumerate(expected, start=1)
+    )
+    explanation = question.get("explanation", "")
+    if explanation:
+        correct_feedback += f". {explanation}"
+
+    return {
+        "score": score,
+        "is_correct": is_ok,
+        "correct_answer": [
+            values[0] if values else ""
+            for values in expected
+        ],
+        "selected_feedback": selected_feedback,
+        "correct_feedback": correct_feedback,
+    }
+
+
 def extract_ordering_items(question: Dict[str, Any]) -> List[Dict[str, Any]]:
     raw_items = question.get("ordering_items") or question.get("items") or []
     parsed: List[Dict[str, Any]] = []
@@ -1096,6 +1286,9 @@ def evaluate_answer(question: Dict[str, Any], user_answer: Any) -> Dict[str, Any
             "selected_feedback": selected_feedback,
             "correct_feedback": correct_feedback,
         }
+
+    if is_fill_blank_question(question):
+        return evaluate_fill_blank(question, user_answer)
 
     if is_self_assessment_question(question):
         items = extract_self_assessment_items(question)
@@ -2061,7 +2254,22 @@ def render_creator_question(question: Dict[str, Any], index: int) -> None:
         pairs = question.get("pairs") or []
         options = question.get("options") or []
 
-        if is_ordering_question(question):
+        if is_fill_blank_question(question):
+            count = fill_blank_count(question)
+            st.markdown(fill_blank_prompt_text(question))
+            st.caption(f"{count} champ(s) à compléter.")
+            expected = get_fill_blank_expected(question, count)
+            if expected and len(expected) == count:
+                st.success(
+                    "Réponses attendues : "
+                    + " | ".join(
+                        f"[{idx}] {' / '.join(values)}"
+                        for idx, values in enumerate(expected, start=1)
+                    )
+                )
+            else:
+                st.warning("Correction structurée indisponible : contrôle manuel nécessaire.")
+        elif is_ordering_question(question):
             items = extract_ordering_items(question)
             expected = get_ordering_expected_labels(question, items)
             if items:
@@ -2107,7 +2315,9 @@ def render_creator_question(question: Dict[str, Any], index: int) -> None:
 def render_test_question(question: Dict[str, Any], index: int) -> Any:
     qtype = question.get("type", "")
     st.markdown(f"### Question {index}")
-    if is_self_assessment_question(question):
+    if is_fill_blank_question(question):
+        st.markdown(fill_blank_prompt_text(question))
+    elif is_self_assessment_question(question):
         st.markdown(self_assessment_prompt_text(question))
     elif is_ordering_question(question):
         st.markdown(ordering_prompt_text(question))
@@ -2116,6 +2326,25 @@ def render_test_question(question: Dict[str, Any], index: int) -> Any:
 
     options = question.get("options") or []
     pairs = question.get("pairs") or []
+
+    if is_fill_blank_question(question):
+        count = fill_blank_count(question)
+        if count <= 0:
+            return st.text_input(
+                "Ta réponse",
+                key=f"fill_blank_fallback_{index}",
+            )
+
+        st.caption(
+            "Complète chaque champ correspondant au numéro affiché dans la phrase."
+        )
+        answers = {}
+        for blank_index in range(1, count + 1):
+            answers[str(blank_index)] = st.text_input(
+                f"Réponse [{blank_index}]",
+                key=f"fill_blank_{index}_{blank_index}",
+            )
+        return answers
 
     if is_self_assessment_question(question):
         items = extract_self_assessment_items(question)
@@ -2217,7 +2446,9 @@ def render_test_question(question: Dict[str, Any], index: int) -> Any:
 def render_session_question(question: Dict[str, Any], index: int, session_id: int) -> Any:
     qtype = question.get("type", "")
     st.markdown(f"### Question {index}")
-    if is_self_assessment_question(question):
+    if is_fill_blank_question(question):
+        st.markdown(fill_blank_prompt_text(question))
+    elif is_self_assessment_question(question):
         st.markdown(self_assessment_prompt_text(question))
     elif is_ordering_question(question):
         st.markdown(ordering_prompt_text(question))
@@ -2227,6 +2458,25 @@ def render_session_question(question: Dict[str, Any], index: int, session_id: in
     options = question.get("options") or []
     pairs = question.get("pairs") or []
     prefix = f"session_{session_id}_{index}"
+
+    if is_fill_blank_question(question):
+        count = fill_blank_count(question)
+        if count <= 0:
+            return st.text_input(
+                "Ta réponse",
+                key=f"{prefix}_fill_blank_fallback",
+            )
+
+        st.caption(
+            "Complète chaque champ correspondant au numéro affiché dans la phrase."
+        )
+        answers = {}
+        for blank_index in range(1, count + 1):
+            answers[str(blank_index)] = st.text_input(
+                f"Réponse [{blank_index}]",
+                key=f"{prefix}_fill_blank_{blank_index}",
+            )
+        return answers
 
     if is_self_assessment_question(question):
         items = extract_self_assessment_items(question)
@@ -3510,7 +3760,9 @@ def learner_app() -> None:
                         total_score += score
 
                     question_for_save = dict(question)
-                    if is_self_assessment_question(question):
+                    if is_fill_blank_question(question):
+                        question_for_save["type"] = "fill_blank"
+                    elif is_self_assessment_question(question):
                         question_for_save["type"] = "self_assessment"
                     elif is_ordering_question(question):
                         question_for_save["type"] = "ordering"

@@ -30,6 +30,13 @@ TYPE_MAP = {
     "sequence": "ordering",
     "sequencing": "ordering",
     "ranking": "ordering",
+    "self_assessment": "self_assessment",
+    "self_evaluation": "self_assessment",
+    "auto_evaluation": "self_assessment",
+    "autoevaluation": "self_assessment",
+    "likert": "self_assessment",
+    "rating_scale": "self_assessment",
+    "scale": "self_assessment",
 }
 
 

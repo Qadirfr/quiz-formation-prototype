@@ -24,6 +24,7 @@ from utils.learner_db import (
     get_attempt_answers,
     get_attempts_for_learner_email,
     get_attempts_summary,
+    get_progress_answers_for_learner_email,
     init_learner_db,
     save_attempt_result,
     start_attempt,
@@ -1234,6 +1235,265 @@ def compute_cognitive_summary(details: List[Dict[str, Any]]) -> Dict[str, Dict[s
             item["percentage"] = 0.0
 
     return summary
+
+
+def infer_assessment_type(title: str) -> str:
+    normalized = normalize_answer(title)
+
+    if any(token in normalized for token in [
+        "pre assessment",
+        "preassessment",
+        "pre test",
+        "pretest",
+        "diagnostic",
+        "positionnement",
+    ]):
+        return "Pré-assessment"
+
+    if any(token in normalized for token in [
+        "examen final",
+        "final exam",
+        "evaluation finale",
+        "évaluation finale",
+    ]):
+        return "Examen final"
+
+    if any(token in normalized for token in [
+        "examen blanc",
+        "mock exam",
+        "mock",
+    ]):
+        return "Examen blanc"
+
+    if any(token in normalized for token in [
+        "sommative",
+        "summative",
+    ]):
+        return "Évaluation sommative"
+
+    if any(token in normalized for token in [
+        "quiz",
+        "entrainement",
+        "entraînement",
+        "formatif",
+        "formative",
+        "training",
+    ]):
+        return "Entraînement / formatif"
+
+    if "final" in normalized:
+        return "Examen final"
+
+    return "Autre"
+
+
+def _progress_aggregate(
+    rows: List[Dict[str, Any]],
+    dimension: str,
+) -> List[Dict[str, Any]]:
+    groups: Dict[Any, Dict[str, Any]] = {}
+
+    for row in rows:
+        if dimension == "subdomain":
+            domain = (row.get("domain") or "Non classé").strip()
+            subdomain = (row.get("subdomain") or "Non renseigné").strip()
+            key = (domain, subdomain)
+        else:
+            key = (row.get(dimension) or "Non renseigné").strip()
+
+        item = groups.setdefault(
+            key,
+            {
+                "score": 0.0,
+                "max_score": 0.0,
+                "questions": 0,
+                "manual": 0,
+            },
+        )
+        item["questions"] += 1
+
+        if row.get("is_correct") is None:
+            item["manual"] += 1
+        else:
+            item["score"] += float(row.get("score") or 0)
+            item["max_score"] += 1.0
+
+    result = []
+    for key, data in groups.items():
+        pct = (
+            round((data["score"] / data["max_score"]) * 100, 1)
+            if data["max_score"]
+            else 0.0
+        )
+        if dimension == "subdomain":
+            domain, subdomain = key
+            result.append({
+                "Domaine": domain,
+                "Sous-domaine": subdomain,
+                "Réussite": f"{pct}%",
+                "Questions": data["questions"],
+                "À corriger": data["manual"],
+                "_pct": pct,
+            })
+        else:
+            result.append({
+                "Libellé": key,
+                "Réussite": f"{pct}%",
+                "Questions": data["questions"],
+                "À corriger": data["manual"],
+                "_pct": pct,
+            })
+
+    result.sort(key=lambda item: item.get("_pct", 0))
+    return result
+
+
+def render_global_progress(
+    attempts: List[Dict[str, Any]],
+    progress_rows: List[Dict[str, Any]],
+) -> None:
+    if not attempts:
+        st.info("Aucune tentative terminée à synthétiser.")
+        return
+
+    chronological = list(reversed(attempts))
+    assessment_types = []
+    for attempt in chronological:
+        kind = infer_assessment_type(attempt.get("quiz_title", ""))
+        if kind not in assessment_types:
+            assessment_types.append(kind)
+
+    selected_types = st.multiselect(
+        "Types d’évaluation inclus dans la vue globale",
+        options=assessment_types,
+        default=assessment_types,
+        key="learner_global_assessment_types",
+    )
+
+    filtered_attempts = [
+        attempt
+        for attempt in chronological
+        if infer_assessment_type(attempt.get("quiz_title", "")) in selected_types
+    ]
+    attempt_ids = {attempt.get("id") for attempt in filtered_attempts}
+    filtered_rows = [
+        row for row in progress_rows if row.get("attempt_id") in attempt_ids
+    ]
+
+    st.caption(
+        "Pour les anciennes tentatives, le type d’évaluation est déduit du titre. "
+        "Nous ajouterons ensuite une classification explicite dans les quiz."
+    )
+
+    if not filtered_attempts:
+        st.warning("Aucune tentative ne correspond aux types sélectionnés.")
+        return
+
+    first_score = float(filtered_attempts[0].get("percentage") or 0)
+    last_score = float(filtered_attempts[-1].get("percentage") or 0)
+    best_score = max(float(item.get("percentage") or 0) for item in filtered_attempts)
+    delta = round(last_score - first_score, 1)
+
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Tentatives", len(filtered_attempts))
+    m2.metric("Premier score", f"{round(first_score, 1)}%")
+    m3.metric("Dernier score", f"{round(last_score, 1)}%", delta=f"{delta:+.1f} pts")
+    m4.metric("Meilleur score", f"{round(best_score, 1)}%")
+
+    st.markdown("### Progression globale")
+    x_values = list(range(1, len(filtered_attempts) + 1))
+    y_values = [float(item.get("percentage") or 0) for item in filtered_attempts]
+
+    fig, ax = plt.subplots(figsize=(9, 4))
+    ax.plot(x_values, y_values, marker="o", linewidth=2)
+    ax.set_ylim(0, 100)
+    ax.set_xlabel("Tentative")
+    ax.set_ylabel("Score (%)")
+    ax.set_xticks(x_values)
+    ax.grid(axis="y", alpha=0.25)
+    st.pyplot(fig)
+    plt.close(fig)
+
+    journey_rows = []
+    for index, attempt in enumerate(filtered_attempts, start=1):
+        journey_rows.append({
+            "#": index,
+            "Date": str(attempt.get("created_at") or ""),
+            "Type": infer_assessment_type(attempt.get("quiz_title", "")),
+            "Évaluation": attempt.get("quiz_title", ""),
+            "Score": f"{round(float(attempt.get('percentage') or 0), 1)}%",
+        })
+    st.dataframe(journey_rows, width="stretch", hide_index=True)
+
+    st.markdown("### Maîtrise globale par domaine")
+    domain_rows = _progress_aggregate(filtered_rows, "domain")
+    if domain_rows:
+        visible_domain_rows = [
+            {k: v for k, v in row.items() if k != "_pct"}
+            for row in domain_rows
+        ]
+        st.dataframe(visible_domain_rows, width="stretch", hide_index=True)
+    else:
+        st.info("Aucune donnée de domaine disponible.")
+
+    st.markdown("### Maîtrise globale par sous-domaine")
+    subdomain_rows = _progress_aggregate(filtered_rows, "subdomain")
+    if subdomain_rows:
+        visible_subdomain_rows = [
+            {k: v for k, v in row.items() if k != "_pct"}
+            for row in subdomain_rows
+        ]
+        st.dataframe(visible_subdomain_rows, width="stretch", hide_index=True)
+    else:
+        st.info("Aucune donnée de sous-domaine disponible.")
+
+    domain_names = sorted({
+        (row.get("domain") or "Non classé").strip()
+        for row in filtered_rows
+        if (row.get("domain") or "").strip()
+    })
+
+    if domain_names:
+        st.markdown("### Évolution d’un domaine")
+        selected_domain = st.selectbox(
+            "Domaine à suivre dans le temps",
+            options=domain_names,
+            key="learner_global_domain_follow",
+        )
+
+        domain_points = []
+        for index, attempt in enumerate(filtered_attempts, start=1):
+            rows_for_attempt = [
+                row
+                for row in filtered_rows
+                if row.get("attempt_id") == attempt.get("id")
+                and (row.get("domain") or "Non classé").strip() == selected_domain
+                and row.get("is_correct") is not None
+            ]
+            if not rows_for_attempt:
+                continue
+            score = sum(float(row.get("score") or 0) for row in rows_for_attempt)
+            pct = round((score / len(rows_for_attempt)) * 100, 1)
+            domain_points.append((index, pct, attempt.get("quiz_title", "")))
+
+        if domain_points:
+            fig_domain, ax_domain = plt.subplots(figsize=(9, 4))
+            ax_domain.plot(
+                [point[0] for point in domain_points],
+                [point[1] for point in domain_points],
+                marker="o",
+                linewidth=2,
+            )
+            ax_domain.set_ylim(0, 100)
+            ax_domain.set_xlabel("Tentative")
+            ax_domain.set_ylabel("Réussite du domaine (%)")
+            ax_domain.set_title(selected_domain)
+            ax_domain.set_xticks([point[0] for point in domain_points])
+            ax_domain.grid(axis="y", alpha=0.25)
+            st.pyplot(fig_domain)
+            plt.close(fig_domain)
+        else:
+            st.info("Pas encore assez de données pour suivre ce domaine dans le temps.")
 
 
 def build_improvement_plan(domain_summary: Dict[str, Dict[str, Any]], cognitive_summary: Dict[str, Dict[str, Any]]) -> List[str]:
@@ -2996,40 +3256,71 @@ def learner_app() -> None:
         learner_email = learner.get("email", "")
         attempts = get_attempts_for_learner_email(learner_email, limit=100)
 
-        st.info(f"Profil affiché : {learner_email or '-'} — {len(attempts)} tentative(s) trouvée(s).")
+        st.info(
+            f"Profil affiché : {learner_email or '-'} — "
+            f"{len(attempts)} tentative(s) trouvée(s)."
+        )
 
         if not attempts:
             st.warning("Aucun résultat enregistré pour ce profil.")
         else:
-            labels = [
-                f"{attempt.get('created_at', '')} | {attempt.get('quiz_title', '')} | "
-                f"{attempt.get('percentage', 0)}% | niveau conseillé : {attempt.get('recommended_level') or '-'}"
-                for attempt in attempts
-            ]
-
-            selected_attempt_index = st.selectbox(
-                "Choisir une tentative à afficher",
-                options=list(range(len(attempts))),
-                format_func=lambda i: labels[i],
-                key="learner_result_attempt_select_v21_3",
+            result_view = st.radio(
+                "Affichage",
+                ["Vue globale", "Vue par tentative"],
+                horizontal=True,
+                key="learner_results_view_v24",
             )
 
-            selected_attempt = attempts[selected_attempt_index]
-            details = get_attempt_answers(selected_attempt["id"])
+            if result_view == "Vue globale":
+                _global_started = time.perf_counter()
+                progress_rows = get_progress_answers_for_learner_email(
+                    learner_email,
+                    limit=5000,
+                )
+                render_global_progress(attempts, progress_rows)
+                print(
+                    f"[PERF][LEARNER_GLOBAL_RESULTS] "
+                    f"total={time.perf_counter() - _global_started:.3f}s",
+                    flush=True,
+                )
+            else:
+                labels = [
+                    f"{attempt.get('created_at', '')} | {attempt.get('quiz_title', '')} | "
+                    f"{attempt.get('percentage', 0)}% | niveau conseillé : "
+                    f"{attempt.get('recommended_level') or '-'}"
+                    for attempt in attempts
+                ]
 
-            st.success(
-                f"Tentative sélectionnée : {selected_attempt.get('quiz_title', '')} — "
-                f"{len(details)} réponse(s) détaillée(s)."
-            )
+                selected_attempt_index = st.selectbox(
+                    "Choisir une tentative à afficher",
+                    options=list(range(len(attempts))),
+                    format_func=lambda i: labels[i],
+                    key="learner_result_attempt_select_v21_3",
+                )
 
-            try:
-                render_attempt_report(selected_attempt, details, show_learner=False)
-            except Exception as exc:
-                st.error(f"Erreur pendant l'affichage de la restitution : {exc}")
-                with st.expander("Diagnostic résultat", expanded=True):
-                    st.write("Tentative :", selected_attempt)
-                    st.write("Nombre de réponses détaillées :", len(details))
-                    st.write("Exemple de réponse :", details[0] if details else "Aucune réponse")
+                selected_attempt = attempts[selected_attempt_index]
+                details = get_attempt_answers(selected_attempt["id"])
+
+                st.success(
+                    f"Tentative sélectionnée : {selected_attempt.get('quiz_title', '')} — "
+                    f"{len(details)} réponse(s) détaillée(s)."
+                )
+
+                try:
+                    render_attempt_report(
+                        selected_attempt,
+                        details,
+                        show_learner=False,
+                    )
+                except Exception as exc:
+                    st.error(f"Erreur pendant l'affichage de la restitution : {exc}")
+                    with st.expander("Diagnostic résultat", expanded=True):
+                        st.write("Tentative :", selected_attempt)
+                        st.write("Nombre de réponses détaillées :", len(details))
+                        st.write(
+                            "Exemple de réponse :",
+                            details[0] if details else "Aucune réponse",
+                        )
 
 
 if st.session_state.role is None:

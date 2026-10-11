@@ -44,6 +44,15 @@ TYPE_MAP = {
     "question_a_trous": "fill_blank",
     "cloze": "fill_blank",
     "completion": "fill_blank",
+    "point_allocation": "point_allocation",
+    "allocation_points": "point_allocation",
+    "priority_ranking": "priority_ranking",
+    "prioritization": "priority_ranking",
+    "priorisation": "priority_ranking",
+    "long_answer": "long_answer",
+    "essay": "long_answer",
+    "essay_response": "long_answer",
+    "open_answer": "long_answer",
 }
 
 

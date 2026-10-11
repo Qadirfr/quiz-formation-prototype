@@ -1703,6 +1703,49 @@ def build_cdpo_completion_preview(limit: int = 5000) -> Dict[str, Any]:
     }
 
 
+def build_cdpo_manual_review_preview(limit: int = 5000) -> Dict[str, Any]:
+    """Retourne les questions rouges de la banque CDPO active, sans modification."""
+    records = list_question_bank_records_for_audit(
+        include_inactive=False,
+        limit=limit,
+    )
+    candidates: List[Dict[str, Any]] = []
+
+    for row in records:
+        if not bool(row.get("is_active")):
+            continue
+        if str(row.get("training_scope") or "").strip().upper() != "CDPO":
+            continue
+
+        audit_row = _build_schema_audit_row_for_bank_record(row)
+        if audit_row.get("audit_action") != "manual_review":
+            continue
+        if not audit_row.get("needs_review"):
+            continue
+
+        question = dict(row.get("question_json") or {})
+        candidates.append({
+            "id": int(row.get("id")),
+            "source_quiz_title": row.get("source_quiz_title") or "",
+            "domain": row.get("domain") or "",
+            "subdomain": row.get("subdomain") or "",
+            "current_db_type": str(row.get("question_type") or ""),
+            "current_json_type": str(question.get("type") or ""),
+            "detected_type": str(audit_row.get("detected_type") or "unknown"),
+            "confidence": str(audit_row.get("confidence") or ""),
+            "issues": list(audit_row.get("issues") or []),
+            "question_preview": audit_row.get("question_preview") or "",
+            "suggested_patch": dict(audit_row.get("suggested_patch") or {}),
+            "question": question,
+        })
+
+    return {
+        "scope": "CDPO actif - banque uniquement",
+        "candidate_count": len(candidates),
+        "candidates": candidates,
+    }
+
+
 def _normalize_completion_patch(
     target_type: str,
     patch: Dict[str, Any],
@@ -1861,7 +1904,7 @@ def apply_cdpo_completion_patch(
     question_id: int,
     completion_patch: Dict[str, Any],
 ) -> Dict[str, Any]:
-    """Complète une question orange CDPO avec sauvegarde avant/après atomique."""
+    """Valide une question orange ou rouge CDPO avec sauvegarde avant/après atomique."""
     import uuid
     from datetime import datetime, timezone
     from utils.question_schema import audit_action, classify_question
@@ -1884,9 +1927,10 @@ def apply_cdpo_completion_patch(
         raise ValueError(f"Question {qid} n'appartient pas au périmètre CDPO.")
 
     audit_row = _build_schema_audit_row_for_bank_record(row)
-    if audit_row.get("audit_action") != "needs_completion":
+    current_action = audit_row.get("audit_action")
+    if current_action not in {"needs_completion", "manual_review"}:
         raise ValueError(
-            f"Question {qid} n'est plus classée orange au moment de la validation."
+            f"Question {qid} n'est plus à traiter au moment de la validation."
         )
 
     completion_patch = dict(completion_patch or {})
@@ -1989,7 +2033,7 @@ def apply_cdpo_completion_patch(
             )
 
     migration_run_id = (
-        "schema-v2-orange-"
+        ("schema-v2-red-" if current_action == "manual_review" else "schema-v2-orange-")
         + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         + "-"
         + uuid.uuid4().hex[:8]
@@ -2130,6 +2174,7 @@ def apply_cdpo_completion_patch(
         "issues_after": list(validation.get("issues") or []),
         "detected_type_before": detected_type,
         "trainer_override": bool(requested_type and requested_type != detected_type),
+        "audit_action_before": current_action,
     }
 
 

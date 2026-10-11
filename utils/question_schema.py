@@ -245,13 +245,36 @@ def classify_question(question: Dict[str, Any]) -> Dict[str, Any]:
         confidence = "high"
         reasons.append("consigne ou options vrai/faux détectées")
 
+    elif re.search(
+        r"\\ben\\s+(?:\\d+|un|deux|trois|quatre|cinq)\\s+mots?\\b",
+        normalized,
+    ) or _has_any(normalized, [
+        "en un mot",
+        "en trois mots",
+        "indiquez le delai",
+        "quel est le delai",
+        "en heures",
+        "en jours",
+        "citez un",
+        "citez une",
+        "nommez un",
+        "nommez une",
+        "donnez un exemple",
+        "donnez une valeur",
+    ]):
+        detected = "short_answer"
+        confidence = "high"
+        reasons.append("consigne explicite de réponse courte détectée")
+
     elif _has_any(normalized, [
-        "associez",
-        "associer",
-        "reliez",
-        "relier",
-        "appariez",
-        "apparier",
+        "associez chaque",
+        "associer chaque",
+        "associez les",
+        "associer les",
+        "reliez chaque",
+        "relier chaque",
+        "appariez chaque",
+        "apparier chaque",
         "faites correspondre",
     ]):
         detected = "matching"
@@ -287,24 +310,6 @@ def classify_question(question: Dict[str, Any]) -> Dict[str, Any]:
         detected = "long_answer"
         confidence = "high"
         reasons.append("réponse rédigée déclarée conservée")
-
-    elif _has_any(normalized, [
-        "en trois mots",
-        "en un mot",
-        "indiquez le delai",
-        "quel est le delai",
-        "en heures",
-        "en jours",
-        "citez un",
-        "citez une",
-        "nommez un",
-        "nommez une",
-        "donnez un exemple",
-        "donnez une valeur",
-    ]):
-        detected = "short_answer"
-        confidence = "medium"
-        reasons.append("consigne de réponse courte détectée")
 
     elif _has_any(normalized, [
         "redigez",

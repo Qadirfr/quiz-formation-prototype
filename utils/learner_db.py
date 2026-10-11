@@ -497,7 +497,8 @@ def get_attempt_answers(attempt_id: int) -> List[Dict[str, Any]]:
                 score,
                 domain, subdomain, learning_objective, concept_evaluated,
                 cognitive_level, competency, explanation,
-                selected_feedback, correct_feedback, remediation, created_at
+                selected_feedback, correct_feedback, remediation,
+                question_snapshot_json, created_at
             FROM learner_answers
             WHERE attempt_id = ?
             ORDER BY question_index ASC

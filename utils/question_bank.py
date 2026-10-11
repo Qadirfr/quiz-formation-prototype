@@ -104,14 +104,39 @@ def normalize_text(value: Any) -> str:
 
 
 def make_question_hash(question: Dict[str, Any]) -> str:
-    base = "|".join(
-        [
-            normalize_text(question.get("type", "")),
-            normalize_text(question.get("question", "")),
-            normalize_text(question.get("correct_answer", "")),
-            normalize_text(json.dumps(question.get("pairs", []), ensure_ascii=False, sort_keys=True)),
-        ]
+    parts = [
+        normalize_text(question.get("type", "")),
+        normalize_text(question.get("question", "")),
+        normalize_text(question.get("correct_answer", "")),
+        normalize_text(json.dumps(question.get("pairs", []), ensure_ascii=False, sort_keys=True)),
+    ]
+
+    # Préserve exactement l'ancienne empreinte pour les questions sans support.
+    # Si un cas pratique ou un média existe, il devient partie intégrante de
+    # l'identité de la question afin d'éviter de fusionner deux cas différents.
+    context_payload = (
+        question.get("context")
+        or question.get("case_context")
+        or question.get("case_study")
+        or ""
     )
+    media_payload = question.get("media") or question.get("image_url") or ""
+    if context_payload or media_payload:
+        parts.append(
+            normalize_text(
+                json.dumps(
+                    {
+                        "context": context_payload,
+                        "media": media_payload,
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    default=str,
+                )
+            )
+        )
+
+    base = "|".join(parts)
     return hashlib.sha256(base.encode("utf-8")).hexdigest()
 
 

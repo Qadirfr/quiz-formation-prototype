@@ -4271,6 +4271,328 @@ def trainer_app() -> None:
                         "relance l'audit CDPO actif pour actualiser les compteurs."
                     )
 
+                    st.markdown("---")
+                    st.markdown("### Revue humaine — questions rouges")
+                    st.caption(
+                        "Ici l'auditeur n'est pas assez fiable pour décider seul. "
+                        "Le formateur choisit explicitement le type final, complète "
+                        "les champs nécessaires, puis le type est verrouillé."
+                    )
+
+                    red_saved_count = sum(
+                        1
+                        for row in rows
+                        if row.get("source_kind") == "Quiz sauvegardé"
+                        and audit_action(row) == "manual_review"
+                        and row.get("needs_review")
+                    )
+
+                    if st.button(
+                        "Charger / actualiser les questions rouges de la banque CDPO",
+                        key="load_red_cdpo_questions",
+                        width="stretch",
+                    ):
+                        st.session_state.red_cdpo_review_preview = (
+                            build_cdpo_manual_review_preview(limit=5000)
+                        )
+
+                    red_notice = st.session_state.pop(
+                        "red_cdpo_review_notice",
+                        None,
+                    )
+                    if red_notice:
+                        st.success(red_notice)
+
+                    red_preview = st.session_state.get("red_cdpo_review_preview")
+                    if red_preview is None:
+                        red_preview = build_cdpo_manual_review_preview(limit=5000)
+                        st.session_state.red_cdpo_review_preview = red_preview
+
+                    red_candidates = red_preview.get("candidates") or []
+                    r1, r2 = st.columns(2)
+                    r1.metric("Rouges dans la banque CDPO", len(red_candidates))
+                    r2.metric("Rouges dans les quiz sauvegardés", red_saved_count)
+
+                    if red_saved_count:
+                        st.info(
+                            "Les rouges des quiz déjà sauvegardés restent inchangés "
+                            "pour cette étape et seront traités séparément."
+                        )
+
+                    if not red_candidates:
+                        st.success(
+                            "Plus aucune question rouge dans la banque CDPO active."
+                        )
+                    else:
+                        red_labels = [
+                            (
+                                f"#{item.get('id')} — détecté {item.get('detected_type')} "
+                                f"({item.get('confidence')}) — "
+                                f"{(item.get('question_preview') or '')[:95]}"
+                            )
+                            for item in red_candidates
+                        ]
+                        red_index = st.selectbox(
+                            "Question rouge à arbitrer",
+                            options=list(range(len(red_candidates))),
+                            format_func=lambda i: red_labels[i],
+                            key="red_cdpo_question_select",
+                        )
+                        red_item = red_candidates[red_index]
+                        red_question = red_item.get("question") or {}
+                        red_detected = red_item.get("detected_type") or "unknown"
+                        red_suggested = red_item.get("suggested_patch") or {}
+                        red_items = (
+                            red_question.get("items")
+                            or red_suggested.get("items")
+                            or []
+                        )
+
+                        st.markdown(
+                            f"**Question #{red_item.get('id')} — détection actuelle : "
+                            f"{red_detected} ({red_item.get('confidence')})**"
+                        )
+                        st.write(red_item.get("question_preview") or "")
+                        st.caption(
+                            "Anomalie(s) : "
+                            + (
+                                " | ".join(red_item.get("issues") or [])
+                                if red_item.get("issues")
+                                else "aucune anomalie structurée — intention ambiguë"
+                            )
+                        )
+                        if red_items:
+                            st.markdown("**Éléments déjà détectés**")
+                            for item in red_items:
+                                if isinstance(item, dict):
+                                    st.write(
+                                        f"{item.get('label', '')}. "
+                                        f"{item.get('text', '')}"
+                                    )
+                                else:
+                                    st.write(str(item))
+
+                        with st.form(f"red_review_form_{red_item.get('id')}"):
+                            red_type_labels = {
+                                "short_answer": "Réponse libre courte",
+                                "long_answer": "Réponse rédigée longue",
+                                "priority_ranking": "Priorisation / classement",
+                                "point_allocation": "Répartition de points",
+                                "ordering": "Ordonnancement",
+                                "fill_blank": "Question à trous",
+                                "self_assessment": "Auto-positionnement",
+                                "matching": "Appariement",
+                                "single_choice": "QCM — choix unique",
+                                "true_false": "Vrai / Faux",
+                            }
+                            red_type_values = list(red_type_labels.keys())
+                            red_default = (
+                                red_detected
+                                if red_detected in red_type_values
+                                else "short_answer"
+                            )
+                            red_selected_type = st.selectbox(
+                                "Type final retenu par le formateur",
+                                options=red_type_values,
+                                index=red_type_values.index(red_default),
+                                format_func=lambda value: red_type_labels[value],
+                            )
+                            red_patch: Dict[str, Any] = {
+                                "_target_type_override": red_selected_type,
+                            }
+
+                            if red_selected_type == "short_answer":
+                                red_accepted = st.text_area(
+                                    "Réponses acceptées — facultatif, une par ligne",
+                                    value="\n".join(
+                                        str(x)
+                                        for x in (
+                                            red_question.get("accepted_answers") or []
+                                        )
+                                    ),
+                                    height=110,
+                                )
+                                red_max_words = st.text_input(
+                                    "Nombre maximal de mots — facultatif",
+                                    value=str(red_question.get("max_words") or ""),
+                                    placeholder="Exemple : 3",
+                                )
+                                red_patch.update({
+                                    "accepted_answers": red_accepted,
+                                    "max_words": red_max_words,
+                                })
+
+                            elif red_selected_type == "long_answer":
+                                red_existing_criteria = (
+                                    red_question.get("evaluation_criteria")
+                                    or red_question.get("rubric")
+                                    or []
+                                )
+                                red_criteria = st.text_area(
+                                    "Critères d'évaluation — un par ligne",
+                                    value=(
+                                        "\n".join(
+                                            str(x) for x in red_existing_criteria
+                                        )
+                                        if isinstance(red_existing_criteria, list)
+                                        else str(red_existing_criteria or "")
+                                    ),
+                                    height=160,
+                                    placeholder=(
+                                        "Identifier les éléments clés\n"
+                                        "Justifier le raisonnement\n"
+                                        "Proposer une réponse opérationnelle"
+                                    ),
+                                )
+                                red_max_points = st.text_input(
+                                    "Barème maximal — facultatif",
+                                    value=str(red_question.get("max_points") or ""),
+                                    placeholder="Exemple : 10",
+                                )
+                                red_patch.update({
+                                    "evaluation_criteria": red_criteria,
+                                    "max_points": red_max_points,
+                                })
+
+                            elif red_selected_type == "priority_ranking":
+                                red_ranking_mode = st.selectbox(
+                                    "Mode de priorisation",
+                                    ["rank_all", "top_n"],
+                                    format_func=lambda value: (
+                                        "Classer tous les éléments"
+                                        if value == "rank_all"
+                                        else "Sélectionner et classer un Top N"
+                                    ),
+                                )
+                                red_top_n = ""
+                                if red_ranking_mode == "top_n":
+                                    red_top_n = st.text_input(
+                                        "Nombre de priorités à retenir",
+                                        value=str(red_question.get("top_n") or "3"),
+                                    )
+                                red_patch.update({
+                                    "ranking_mode": red_ranking_mode,
+                                    "top_n": red_top_n,
+                                    "require_justification": st.checkbox(
+                                        "Demander une justification",
+                                        value=True,
+                                    ),
+                                })
+
+                            elif red_selected_type == "point_allocation":
+                                red_patch.update({
+                                    "total_points": st.text_input(
+                                        "Total de points à répartir",
+                                        value=str(red_question.get("total_points") or "100"),
+                                    ),
+                                    "require_justification": st.checkbox(
+                                        "Demander une justification",
+                                        value=True,
+                                    ),
+                                })
+
+                            elif red_selected_type == "ordering":
+                                red_order = red_question.get("correct_order") or ""
+                                if isinstance(red_order, list):
+                                    red_order = "".join(str(x) for x in red_order)
+                                red_patch["correct_order"] = st.text_input(
+                                    "Ordre attendu",
+                                    value=str(red_order),
+                                    placeholder="Exemple : CABDE",
+                                )
+
+                            elif red_selected_type == "fill_blank":
+                                red_answers = red_question.get("correct_answers") or []
+                                red_patch["correct_answers"] = st.text_area(
+                                    "Réponses attendues — une par trou",
+                                    value=(
+                                        "\n".join(str(x) for x in red_answers)
+                                        if isinstance(red_answers, list)
+                                        else str(red_answers or "")
+                                    ),
+                                    height=130,
+                                )
+
+                            elif red_selected_type == "self_assessment":
+                                st.caption("Échelle standard retenue : 1 à 5.")
+                                red_patch.update({
+                                    "scale_min": 1,
+                                    "scale_max": 5,
+                                })
+
+                            elif red_selected_type == "matching":
+                                red_pairs = red_question.get("pairs") or []
+                                red_pair_lines = []
+                                for pair in red_pairs:
+                                    if isinstance(pair, dict):
+                                        red_pair_lines.append(
+                                            f"{pair.get('left', '')} => "
+                                            f"{pair.get('right', '')}"
+                                        )
+                                red_patch["_pairs_text"] = st.text_area(
+                                    "Associations — format gauche => droite",
+                                    value="\n".join(red_pair_lines),
+                                    height=150,
+                                )
+
+                            elif red_selected_type in {"single_choice", "true_false"}:
+                                red_options = red_question.get("options") or []
+                                if red_selected_type == "true_false" and not red_options:
+                                    red_options = ["Vrai", "Faux"]
+                                red_patch["options"] = st.text_area(
+                                    "Options — une par ligne",
+                                    value="\n".join(str(x) for x in red_options),
+                                    height=130,
+                                )
+                                red_patch["correct_answer"] = st.text_input(
+                                    "Bonne réponse",
+                                    value=str(red_question.get("correct_answer") or ""),
+                                )
+
+                            submitted_red = st.form_submit_button(
+                                "Valider cette revue humaine",
+                                type="primary",
+                                width="stretch",
+                            )
+
+                        if submitted_red:
+                            try:
+                                if "_pairs_text" in red_patch:
+                                    parsed_pairs = []
+                                    for line in str(
+                                        red_patch.pop("_pairs_text") or ""
+                                    ).splitlines():
+                                        if "=>" not in line:
+                                            continue
+                                        left, right = line.split("=>", 1)
+                                        if left.strip() and right.strip():
+                                            parsed_pairs.append({
+                                                "left": left.strip(),
+                                                "right": right.strip(),
+                                            })
+                                    red_patch["pairs"] = parsed_pairs
+
+                                red_result = apply_cdpo_completion_patch(
+                                    int(red_item["id"]),
+                                    red_patch,
+                                )
+                                st.session_state.red_cdpo_review_preview = (
+                                    build_cdpo_manual_review_preview(limit=5000)
+                                )
+                                st.session_state.red_cdpo_review_notice = (
+                                    f"Question #{red_result.get('question_id')} "
+                                    f"validée comme {red_result.get('target_type')} "
+                                    "et journalisée."
+                                )
+                                st.rerun()
+                            except Exception as exc:
+                                st.error(f"Revue non appliquée : {exc}")
+
+                    st.caption(
+                        "Objectif de nettoyage : ramener Orange = 0 et Rouge = 0 "
+                        "dans la banque CDPO avant de poursuivre les nouveaux développements."
+                    )
+
         current_quiz = st.session_state.quiz
         if current_quiz and not current_quiz.get("error"):
             if st.button("Ajouter le quiz actuellement chargé à la banque", type="primary", width="stretch"):

@@ -3043,6 +3043,67 @@ def render_session_correction(answer: Dict[str, Any], question: Dict[str, Any]) 
         st.warning(answer.get("selected_feedback") or "Réponse enregistrée, à corriger manuellement.")
         st.info(answer.get("correct_feedback") or question.get("explanation", "") or "Correction indisponible.")
 
+def _manual_lines(value: str) -> List[str]:
+    return [
+        line.strip()
+        for line in str(value or "").splitlines()
+        if line.strip()
+    ]
+
+
+def _manual_lettered_items(lines: List[str]) -> List[Dict[str, str]]:
+    return [
+        {"label": option_label(index), "text": text}
+        for index, text in enumerate(lines)
+        if text
+    ]
+
+
+def _manual_pairs(value: str) -> List[Dict[str, str]]:
+    pairs = []
+    for line in _manual_lines(value):
+        if "=>" not in line:
+            continue
+        left, right = line.split("=>", 1)
+        left = left.strip()
+        right = right.strip()
+        if left and right:
+            pairs.append({"left": left, "right": right})
+    return pairs
+
+
+def _manual_image_data_url(uploaded_file: Any) -> str:
+    if uploaded_file is None:
+        return ""
+    raw = uploaded_file.getvalue()
+    if not raw:
+        return ""
+    if len(raw) > 2 * 1024 * 1024:
+        raise ValueError(
+            "Image trop volumineuse pour un stockage intégré. "
+            "Utilise une image de moins de 2 Mo ou une URL."
+        )
+    mime = getattr(uploaded_file, "type", None) or "image/png"
+    encoded = base64.b64encode(raw).decode("ascii")
+    return f"data:{mime};base64,{encoded}"
+
+
+def _manual_type_label(value: str) -> str:
+    labels = {
+        "single_choice": "QCM — choix unique",
+        "true_false": "Vrai / Faux",
+        "matching": "Appariement",
+        "ordering": "Ordonnancement",
+        "fill_blank": "Question à trous",
+        "self_assessment": "Auto-positionnement",
+        "point_allocation": "Répartition de points",
+        "priority_ranking": "Priorisation / classement",
+        "short_answer": "Réponse libre courte",
+        "long_answer": "Réponse rédigée longue",
+    }
+    return labels.get(value, value)
+
+
 def trainer_app() -> None:
     st.title("Espace formateur")
     st.caption("Création, import enrichi, sauvegarde, restitutions, résultats et exports.")

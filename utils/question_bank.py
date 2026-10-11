@@ -1638,6 +1638,414 @@ def list_question_schema_migration_log(
     return rows
 
 
+def build_cdpo_completion_preview(limit: int = 5000) -> Dict[str, Any]:
+    """Retourne les questions orange de la banque CDPO active, sans modification."""
+    records = list_question_bank_records_for_audit(
+        include_inactive=False,
+        limit=limit,
+    )
+    candidates: List[Dict[str, Any]] = []
+
+    for row in records:
+        if not bool(row.get("is_active")):
+            continue
+        if str(row.get("training_scope") or "").strip().upper() != "CDPO":
+            continue
+
+        audit_row = _build_schema_audit_row_for_bank_record(row)
+        if audit_row.get("audit_action") != "needs_completion":
+            continue
+
+        question = dict(row.get("question_json") or {})
+        candidates.append({
+            "id": int(row.get("id")),
+            "source_quiz_title": row.get("source_quiz_title") or "",
+            "domain": row.get("domain") or "",
+            "subdomain": row.get("subdomain") or "",
+            "current_db_type": str(row.get("question_type") or ""),
+            "current_json_type": str(question.get("type") or ""),
+            "target_type": str(audit_row.get("detected_type") or ""),
+            "issues": list(audit_row.get("issues") or []),
+            "question_preview": audit_row.get("question_preview") or "",
+            "suggested_patch": dict(audit_row.get("suggested_patch") or {}),
+            "question": question,
+        })
+
+    return {
+        "scope": "CDPO actif - banque uniquement",
+        "candidate_count": len(candidates),
+        "candidates": candidates,
+    }
+
+
+def _normalize_completion_patch(
+    target_type: str,
+    patch: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Nettoie les champs saisis dans l'éditeur orange avant validation."""
+    cleaned = dict(patch or {})
+
+    if target_type == "point_allocation":
+        try:
+            total_points = int(cleaned.get("total_points") or 0)
+        except Exception:
+            total_points = 0
+        if total_points <= 0:
+            raise ValueError("Le total de points doit être un entier strictement positif.")
+        cleaned["total_points"] = total_points
+        cleaned["require_justification"] = bool(
+            cleaned.get("require_justification", True)
+        )
+
+    elif target_type == "priority_ranking":
+        ranking_mode = str(cleaned.get("ranking_mode") or "").strip()
+        if ranking_mode not in {"rank_all", "top_n"}:
+            raise ValueError(
+                "Choisis un mode de classement : rank_all ou top_n."
+            )
+        cleaned["ranking_mode"] = ranking_mode
+        if ranking_mode == "top_n":
+            try:
+                top_n = int(cleaned.get("top_n") or 0)
+            except Exception:
+                top_n = 0
+            if top_n <= 0:
+                raise ValueError("Le nombre d'éléments du top doit être positif.")
+            cleaned["top_n"] = top_n
+        else:
+            cleaned.pop("top_n", None)
+        cleaned["require_justification"] = bool(
+            cleaned.get("require_justification", True)
+        )
+
+    elif target_type == "long_answer":
+        criteria = cleaned.get("evaluation_criteria") or []
+        if isinstance(criteria, str):
+            criteria = [
+                line.strip()
+                for line in criteria.splitlines()
+                if line.strip()
+            ]
+        if not isinstance(criteria, list) or not criteria:
+            raise ValueError(
+                "Ajoute au moins un critère d'évaluation pour la réponse rédigée."
+            )
+        cleaned["evaluation_criteria"] = [
+            str(item).strip() for item in criteria if str(item).strip()
+        ]
+        if cleaned.get("max_points") not in (None, ""):
+            try:
+                max_points = float(cleaned["max_points"])
+            except Exception:
+                raise ValueError("Le barème maximal doit être numérique.")
+            if max_points <= 0:
+                raise ValueError("Le barème maximal doit être positif.")
+            cleaned["max_points"] = max_points
+        else:
+            cleaned.pop("max_points", None)
+
+    elif target_type == "fill_blank":
+        answers = cleaned.get("correct_answers") or []
+        if isinstance(answers, str):
+            answers = [
+                line.strip()
+                for line in answers.splitlines()
+                if line.strip()
+            ]
+        if not isinstance(answers, list) or not answers:
+            raise ValueError(
+                "Renseigne les réponses attendues, une réponse par trou."
+            )
+        cleaned["correct_answers"] = [
+            str(item).strip() for item in answers if str(item).strip()
+        ]
+
+    elif target_type == "ordering":
+        order = cleaned.get("correct_order") or []
+        if isinstance(order, str):
+            compact = "".join(ch for ch in order.upper() if ch.isalpha())
+            order = list(compact)
+        if not isinstance(order, list) or not order:
+            raise ValueError("Renseigne l'ordre attendu, par exemple ABCDE.")
+        cleaned["correct_order"] = [
+            str(item).strip().upper()
+            for item in order
+            if str(item).strip()
+        ]
+
+    elif target_type == "matching":
+        pairs = cleaned.get("pairs") or []
+        if not isinstance(pairs, list) or not pairs:
+            raise ValueError("Renseigne au moins une paire d'appariement.")
+        normalized_pairs = []
+        for pair in pairs:
+            if not isinstance(pair, dict):
+                continue
+            left = str(pair.get("left") or "").strip()
+            right = str(pair.get("right") or "").strip()
+            if left and right:
+                normalized_pairs.append({"left": left, "right": right})
+        if not normalized_pairs:
+            raise ValueError("Les paires d'appariement sont incomplètes.")
+        cleaned["pairs"] = normalized_pairs
+
+    elif target_type in {"single_choice", "true_false"}:
+        options = cleaned.get("options")
+        if isinstance(options, str):
+            options = [
+                line.strip()
+                for line in options.splitlines()
+                if line.strip()
+            ]
+        if options is not None:
+            cleaned["options"] = list(options)
+        if cleaned.get("correct_answer") in (None, ""):
+            raise ValueError("Renseigne la bonne réponse.")
+
+    return cleaned
+
+
+def apply_cdpo_completion_patch(
+    question_id: int,
+    completion_patch: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Complète une question orange CDPO avec sauvegarde avant/après atomique."""
+    import uuid
+    from datetime import datetime, timezone
+    from utils.question_schema import audit_action, classify_question
+
+    qid = int(question_id)
+    records = {
+        int(row.get("id")): row
+        for row in list_question_bank_records_for_audit(
+            include_inactive=False,
+            limit=5000,
+        )
+        if row.get("id") is not None
+    }
+    row = records.get(qid)
+    if not row:
+        raise ValueError(f"Question {qid} introuvable.")
+    if not bool(row.get("is_active")):
+        raise ValueError(f"Question {qid} n'est plus active.")
+    if str(row.get("training_scope") or "").strip().upper() != "CDPO":
+        raise ValueError(f"Question {qid} n'appartient pas au périmètre CDPO.")
+
+    audit_row = _build_schema_audit_row_for_bank_record(row)
+    if audit_row.get("audit_action") != "needs_completion":
+        raise ValueError(
+            f"Question {qid} n'est plus classée orange au moment de la validation."
+        )
+
+    target_type = str(audit_row.get("detected_type") or "")
+    cleaned_patch = _normalize_completion_patch(target_type, completion_patch)
+
+    previous_question = dict(row.get("question_json") or {})
+    new_question = dict(previous_question)
+    new_question.update(dict(audit_row.get("suggested_patch") or {}))
+    new_question.update(cleaned_patch)
+    new_question["type"] = target_type
+    new_question["schema_version"] = 2
+
+    # Validations de cohérence propres aux types structurés.
+    if target_type == "priority_ranking":
+        item_count = len(new_question.get("items") or [])
+        if new_question.get("ranking_mode") == "top_n":
+            top_n = int(new_question.get("top_n") or 0)
+            if item_count and top_n > item_count:
+                raise ValueError(
+                    f"Le top {top_n} dépasse les {item_count} éléments disponibles."
+                )
+
+    if target_type == "fill_blank":
+        text = str(new_question.get("question") or "")
+        blank_count = len(
+            __import__("re").findall(
+                r"\[\s*(?:\.\.\.|…+)\s*\]",
+                text,
+            )
+        )
+        answers = new_question.get("correct_answers") or []
+        if blank_count and len(answers) != blank_count:
+            raise ValueError(
+                f"Cette question contient {blank_count} trou(s) mais "
+                f"{len(answers)} réponse(s) ont été renseignée(s)."
+            )
+
+    validation = classify_question(new_question)
+    validation_row = {
+        "detected_type": validation.get("detected_type"),
+        "confidence": validation.get("confidence"),
+        "issues": validation.get("issues") or [],
+    }
+    if audit_action(validation_row) == "needs_completion":
+        raise ValueError(
+            "La question reste incomplète après validation : "
+            + ", ".join(validation.get("issues") or [])
+        )
+    if validation.get("detected_type") == "unknown":
+        raise ValueError(
+            "La question devient ambiguë après la modification ; migration annulée."
+        )
+
+    previous_hash = str(row.get("question_hash") or "")
+    new_hash = make_question_hash(new_question)
+
+    conflict_rows = _fetchall(
+        "SELECT id FROM question_bank WHERE question_hash = "
+        + ("%s" if _pg() else "?"),
+        (new_hash,),
+    )
+    for conflict in conflict_rows:
+        owner = int(conflict.get("id"))
+        if owner != qid:
+            raise ValueError(
+                f"Une autre question ({owner}) possède déjà la même empreinte."
+            )
+
+    migration_run_id = (
+        "schema-v2-orange-"
+        + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        + "-"
+        + uuid.uuid4().hex[:8]
+    )
+
+    with get_connection() as conn:
+        try:
+            _ensure_question_schema_migration_log(conn)
+            if _pg():
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT question_hash, is_active, training_scope
+                        FROM question_bank
+                        WHERE id = %s
+                        FOR UPDATE
+                        """,
+                        (qid,),
+                    )
+                    current = cur.fetchone()
+                    if not current:
+                        raise ValueError(f"Question {qid} introuvable.")
+                    current = _row(current)
+                    if str(current.get("question_hash") or "") != previous_hash:
+                        raise ValueError(
+                            "La question a changé depuis son affichage. "
+                            "Recharge l'audit avant de recommencer."
+                        )
+
+                    cur.execute(
+                        """
+                        INSERT INTO question_schema_migration_log (
+                            migration_run_id,
+                            question_id,
+                            previous_question_type,
+                            new_question_type,
+                            previous_question_hash,
+                            new_question_hash,
+                            previous_question_json,
+                            new_question_json
+                        )
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                        """,
+                        (
+                            migration_run_id,
+                            qid,
+                            str(row.get("question_type") or ""),
+                            target_type,
+                            previous_hash,
+                            new_hash,
+                            _json_db(previous_question),
+                            _json_db(new_question),
+                        ),
+                    )
+                    cur.execute(
+                        """
+                        UPDATE question_bank
+                        SET question_type = %s, question_hash = %s, question_json = %s
+                        WHERE id = %s
+                        """,
+                        (
+                            target_type,
+                            new_hash,
+                            _json_db(new_question),
+                            qid,
+                        ),
+                    )
+            else:
+                current = conn.execute(
+                    """
+                    SELECT question_hash, is_active, training_scope
+                    FROM question_bank
+                    WHERE id = ?
+                    """,
+                    (qid,),
+                ).fetchone()
+                if not current:
+                    raise ValueError(f"Question {qid} introuvable.")
+                current = _row(current)
+                if str(current.get("question_hash") or "") != previous_hash:
+                    raise ValueError(
+                        "La question a changé depuis son affichage. "
+                        "Recharge l'audit avant de recommencer."
+                    )
+
+                conn.execute(
+                    """
+                    INSERT INTO question_schema_migration_log (
+                        migration_run_id,
+                        question_id,
+                        previous_question_type,
+                        new_question_type,
+                        previous_question_hash,
+                        new_question_hash,
+                        previous_question_json,
+                        new_question_json
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        migration_run_id,
+                        qid,
+                        str(row.get("question_type") or ""),
+                        target_type,
+                        previous_hash,
+                        new_hash,
+                        _json_db(previous_question),
+                        _json_db(new_question),
+                    ),
+                )
+                conn.execute(
+                    """
+                    UPDATE question_bank
+                    SET question_type = ?, question_hash = ?, question_json = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        target_type,
+                        new_hash,
+                        _json_db(new_question),
+                        qid,
+                    ),
+                )
+
+            conn.commit()
+        except Exception:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            raise
+
+    return {
+        "question_id": qid,
+        "migration_run_id": migration_run_id,
+        "target_type": target_type,
+        "issues_before": list(audit_row.get("issues") or []),
+        "issues_after": list(validation.get("issues") or []),
+    }
+
+
 def _v23_add_filter(where, params, field, value, placeholder, empty_label=None):
     if not value or value == "Tous":
         return

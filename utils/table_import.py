@@ -395,6 +395,75 @@ def rows_to_quiz(rows: List[Dict[str, Any]], filename: str = "quiz") -> Dict[str
 
     questions = []
 
+    # Un même cas pratique peut alimenter plusieurs questions. Le fichier
+    # industriel renseigne l'exposé une seule fois avec case_id, puis les
+    # lignes suivantes réutilisent ce case_id sans répéter tout le texte.
+    case_registry: Dict[str, Dict[str, Any]] = {}
+    for row in rows:
+        case_id = get_value(row, "case_id", "scenario_id", "cas_id")
+        if not case_id:
+            continue
+
+        context_text = get_value(
+            row,
+            "context_text",
+            "case_context",
+            "case_text",
+            "cas_pratique",
+            "contexte",
+        )
+        media_url = get_value(
+            row,
+            "media_url",
+            "image_url",
+            "illustration_url",
+        )
+
+        entry = case_registry.setdefault(case_id, {})
+        if context_text:
+            entry["context"] = {
+                "title": get_value(
+                    row,
+                    "context_title",
+                    "case_title",
+                    "titre_cas",
+                ) or "Cas pratique / contexte",
+                "text": context_text,
+                "collapsible": parse_bool(
+                    get_value(
+                        row,
+                        "context_collapsible",
+                        "case_collapsible",
+                    ),
+                    True,
+                ),
+                "expanded": parse_bool(
+                    get_value(
+                        row,
+                        "context_expanded",
+                        "case_expanded",
+                    ),
+                    False,
+                ),
+            }
+        if media_url:
+            entry["media"] = {
+                "type": get_value(row, "media_type", "type_media") or "image",
+                "url": media_url,
+                "caption": get_value(
+                    row,
+                    "media_caption",
+                    "image_caption",
+                    "legende_media",
+                ),
+                "alt_text": get_value(
+                    row,
+                    "media_alt_text",
+                    "image_alt_text",
+                    "texte_alternatif",
+                ),
+            }
+
     for row in rows:
         question_text = get_value(row, "question", "consigne", "enonce")
         if not question_text:
@@ -466,6 +535,10 @@ def rows_to_quiz(rows: List[Dict[str, Any]], filename: str = "quiz") -> Dict[str
             ),
         }
 
+        case_id = get_value(row, "case_id", "scenario_id", "cas_id")
+        if case_id:
+            question["case_id"] = case_id
+
         items = parse_items(row)
         if items:
             question["items"] = items
@@ -504,6 +577,8 @@ def rows_to_quiz(rows: List[Dict[str, Any]], filename: str = "quiz") -> Dict[str
                     False,
                 ),
             }
+        elif case_id and case_registry.get(case_id, {}).get("context"):
+            question["context"] = dict(case_registry[case_id]["context"])
 
         media_url = get_value(
             row,
@@ -528,6 +603,8 @@ def rows_to_quiz(rows: List[Dict[str, Any]], filename: str = "quiz") -> Dict[str
                     "texte_alternatif",
                 ),
             }
+        elif case_id and case_registry.get(case_id, {}).get("media"):
+            question["media"] = dict(case_registry[case_id]["media"])
 
         total_points = get_value(row, "total_points", "points_total")
         if total_points:

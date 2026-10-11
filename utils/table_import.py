@@ -154,6 +154,151 @@ def read_xlsx_rows(uploaded_file) -> List[Dict[str, Any]]:
     return rows
 
 
+def read_json_quiz(uploaded_file) -> Dict[str, Any]:
+    raw = uploaded_file.getvalue()
+    try:
+        text = raw.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        text = raw.decode("latin-1")
+
+    try:
+        payload = json.loads(text)
+    except Exception as exc:
+        raise ValueError(f"JSON invalide : {exc}") from exc
+
+    if isinstance(payload, list):
+        payload = {
+            "quiz_title": f"Quiz importe - {Path(uploaded_file.name).stem}",
+            "questions": payload,
+        }
+
+    if not isinstance(payload, dict):
+        raise ValueError(
+            "Le JSON doit contenir un objet quiz ou une liste de questions."
+        )
+
+    questions = payload.get("questions")
+    if not isinstance(questions, list) or not questions:
+        raise ValueError(
+            "Le JSON doit contenir une liste non vide dans la cle 'questions'."
+        )
+
+    normalized_questions: List[Dict[str, Any]] = []
+    for index, raw_question in enumerate(questions, start=1):
+        if not isinstance(raw_question, dict):
+            raise ValueError(
+                f"Question {index} invalide : chaque question doit etre un objet JSON."
+            )
+
+        question = dict(raw_question)
+        question["type"] = normalize_type(
+            question.get("type")
+            or question.get("question_type")
+            or "single_choice"
+        )
+        question["question"] = clean_cell(
+            question.get("question")
+            or question.get("question_text")
+            or question.get("consigne")
+            or question.get("enonce")
+        )
+        question.setdefault("domain", question.get("domaine") or "Non classe")
+        question.setdefault("subdomain", question.get("sous_domaine") or "")
+        question.setdefault("difficulty", question.get("niveau") or "Import")
+        question.setdefault(
+            "cognitive_level",
+            question.get("niveau_cognitif") or "",
+        )
+        question.setdefault(
+            "learning_objective",
+            question.get("objectif_pedagogique") or "",
+        )
+        question.setdefault(
+            "competency",
+            question.get("competence") or question.get("competence_evaluee") or "",
+        )
+        question.setdefault(
+            "concept_evaluated",
+            question.get("notion") or question.get("notion_evaluee") or "",
+        )
+        question.setdefault("options", [])
+        question.setdefault("pairs", [])
+        question.setdefault("accepted_answers", [])
+        question.setdefault("feedbacks", {})
+        question.setdefault("explanation", "")
+        question.setdefault("remediation", "")
+        question.setdefault("source_excerpt", "")
+        question.setdefault("quality_score", 80)
+        question.setdefault(
+            "quality_notes",
+            "Question importee depuis un fichier JSON structure.",
+        )
+
+        if question["type"] == "true_false" and not question.get("options"):
+            question["options"] = ["Vrai", "Faux"]
+
+        normalized_questions.append(question)
+
+    quiz = dict(payload)
+    quiz["quiz_title"] = clean_cell(
+        quiz.get("quiz_title")
+        or quiz.get("title")
+        or f"Quiz importe - {Path(uploaded_file.name).stem}"
+    )
+    quiz["questions"] = normalized_questions
+    quiz["analysis_summary"] = quiz.get(
+        "analysis_summary",
+        "Quiz importe depuis un fichier JSON structure.",
+    )
+    quiz["quality_summary"] = build_quality_summary(normalized_questions)
+    quiz["note"] = quiz.get(
+        "note",
+        "Quiz charge depuis un fichier JSON. Validation recommandee avant ajout a la banque.",
+    )
+    return quiz
+
+
+def parse_items(row: Dict[str, Any]) -> List[Dict[str, str]]:
+    items_json = get_value(row, "items_json", "elements_json", "items")
+    if items_json:
+        try:
+            parsed = json.loads(items_json)
+            if isinstance(parsed, list):
+                items: List[Dict[str, str]] = []
+                for index, item in enumerate(parsed):
+                    if isinstance(item, dict):
+                        label = clean_cell(item.get("label")) or chr(65 + index)
+                        text = clean_cell(
+                            item.get("text")
+                            or item.get("value")
+                            or item.get("label_text")
+                        )
+                    else:
+                        label = chr(65 + index)
+                        text = clean_cell(item)
+                    if text:
+                        items.append({"label": label.upper(), "text": text})
+                if items:
+                    return items
+        except Exception:
+            pass
+
+    items = []
+    for i in range(1, 11):
+        text = get_value(
+            row,
+            f"item_{i}",
+            f"element_{i}",
+            f"critere_{i}",
+        )
+        if text:
+            items.append({
+                "label": chr(64 + i),
+                "text": text,
+            })
+    return items
+
+
 def parse_pairs(row: Dict[str, Any]) -> List[Dict[str, str]]:
     pairs = []
 
@@ -312,7 +457,18 @@ def rows_to_quiz(rows: List[Dict[str, Any]], filename: str = "quiz") -> Dict[str
             "remediation": get_value(row, "remediation", "piste_de_revision", "pistes_de_travail"),
             "quality_score": parse_int(get_value(row, "quality_score", "score_qualite"), 80),
             "quality_notes": get_value(row, "quality_notes", "notes_qualite") or "Question importee depuis un fichier structure.",
+            "training_scope": get_value(row, "training_scope", "formation"),
+            "question_set_type": get_value(
+                row,
+                "question_set_type",
+                "type_serie",
+                "assessment_type",
+            ),
         }
+
+        items = parse_items(row)
+        if items:
+            question["items"] = items
 
         context_text = get_value(
             row,
@@ -338,6 +494,14 @@ def rows_to_quiz(rows: List[Dict[str, Any]], filename: str = "quiz") -> Dict[str
                         "case_collapsible",
                     ),
                     True,
+                ),
+                "expanded": parse_bool(
+                    get_value(
+                        row,
+                        "context_expanded",
+                        "case_expanded",
+                    ),
+                    False,
                 ),
             }
 
@@ -373,6 +537,28 @@ def rows_to_quiz(rows: List[Dict[str, Any]], filename: str = "quiz") -> Dict[str
         if ranking_mode:
             question["ranking_mode"] = normalize_header(ranking_mode)
 
+        top_n = get_value(row, "top_n", "nombre_priorites")
+        if top_n:
+            question["top_n"] = parse_int(top_n, 0)
+
+        correct_order = get_value(
+            row,
+            "correct_order",
+            "expected_order",
+            "ordre_correct",
+        )
+        if correct_order:
+            question["correct_order"] = [
+                ch for ch in correct_order.upper() if ch.isalpha()
+            ]
+
+        scale_min = get_value(row, "scale_min", "echelle_min")
+        scale_max = get_value(row, "scale_max", "echelle_max")
+        if scale_min:
+            question["scale_min"] = parse_int(scale_min, 1)
+        if scale_max:
+            question["scale_max"] = parse_int(scale_max, 5)
+
         require_justification = get_value(
             row,
             "require_justification",
@@ -387,6 +573,13 @@ def rows_to_quiz(rows: List[Dict[str, Any]], filename: str = "quiz") -> Dict[str
         max_words = get_value(row, "max_words", "nombre_mots_max")
         if max_words:
             question["max_words"] = parse_int(max_words, 0)
+
+        max_points = get_value(row, "max_points", "bareme_max")
+        if max_points:
+            try:
+                question["max_points"] = float(str(max_points).replace(",", "."))
+            except Exception:
+                pass
 
         criteria_raw = get_value(
             row,
@@ -418,18 +611,256 @@ def rows_to_quiz(rows: List[Dict[str, Any]], filename: str = "quiz") -> Dict[str
 def read_quiz_table(uploaded_file) -> Dict[str, Any]:
     name = uploaded_file.name.lower()
 
+    if name.endswith(".json"):
+        return read_json_quiz(uploaded_file)
     if name.endswith(".csv"):
         rows = read_csv_rows(uploaded_file)
     elif name.endswith(".xlsx"):
         rows = read_xlsx_rows(uploaded_file)
     else:
-        raise ValueError("Format non supporte. Utilise CSV ou XLSX.")
+        raise ValueError("Format non supporte. Utilise CSV, XLSX ou JSON.")
 
     return rows_to_quiz(rows, uploaded_file.name)
 
 
+def validate_imported_quiz(quiz: Dict[str, Any]) -> Dict[str, Any]:
+    from utils.question_schema import classify_question
+
+    errors: List[str] = []
+    warnings: List[str] = []
+    question_reports: List[Dict[str, Any]] = []
+
+    if not isinstance(quiz, dict):
+        return {
+            "valid": False,
+            "errors": ["Le contenu importe n'est pas un quiz valide."],
+            "warnings": [],
+            "questions": [],
+            "question_count": 0,
+        }
+
+    questions = quiz.get("questions") or []
+    if not isinstance(questions, list) or not questions:
+        errors.append("Le quiz ne contient aucune question exploitable.")
+        questions = []
+
+    for index, question in enumerate(questions, start=1):
+        q_errors: List[str] = []
+        q_warnings: List[str] = []
+
+        if not isinstance(question, dict):
+            q_errors.append("La question n'est pas un objet structure.")
+            question_reports.append({
+                "index": index,
+                "type": "unknown",
+                "errors": q_errors,
+                "warnings": q_warnings,
+            })
+            continue
+
+        qtype = normalize_type(question.get("type", ""))
+        text = clean_cell(question.get("question"))
+        if not text:
+            q_errors.append("Enonce manquant.")
+
+        if qtype not in set(TYPE_MAP.values()):
+            q_errors.append(f"Type non supporte : {qtype}")
+
+        options = question.get("options") or []
+        pairs = question.get("pairs") or []
+        items = question.get("items") or []
+
+        if qtype == "single_choice":
+            if len(options) < 2:
+                q_errors.append("QCM : au moins deux options sont requises.")
+            if not question.get("correct_answer"):
+                q_errors.append("QCM : bonne reponse manquante.")
+
+        elif qtype == "true_false":
+            if not question.get("correct_answer"):
+                q_errors.append("Vrai/Faux : bonne reponse manquante.")
+
+        elif qtype == "matching":
+            if not pairs:
+                q_errors.append("Appariement : paires manquantes.")
+
+        elif qtype == "ordering":
+            if not items and not options:
+                q_errors.append("Ordonnancement : elements a classer manquants.")
+            if not (
+                question.get("correct_order")
+                or question.get("expected_order")
+                or question.get("correct_answer")
+            ):
+                q_warnings.append(
+                    "Ordonnancement : ordre attendu absent, correction differee probable."
+                )
+
+        elif qtype == "fill_blank":
+            blanks = len(re.findall(r"\[\s*(?:\.\.\.|…+)\s*\]", text))
+            answers = question.get("correct_answers") or []
+            if blanks == 0:
+                q_errors.append("Question a trous : aucun marqueur [...] detecte.")
+            if answers and blanks and len(answers) != blanks:
+                q_errors.append(
+                    f"Question a trous : {blanks} trou(s), {len(answers)} reponse(s)."
+                )
+            if not answers:
+                q_errors.append("Question a trous : reponses attendues manquantes.")
+
+        elif qtype == "self_assessment":
+            if not items and not options:
+                q_errors.append("Auto-positionnement : dimensions manquantes.")
+
+        elif qtype == "point_allocation":
+            if not items:
+                q_errors.append("Repartition de points : elements manquants.")
+            if not question.get("total_points"):
+                q_errors.append("Repartition de points : total_points manquant.")
+
+        elif qtype == "priority_ranking":
+            if not items:
+                q_errors.append("Priorisation : elements manquants.")
+            if question.get("ranking_mode") not in {"rank_all", "top_n"}:
+                q_errors.append("Priorisation : ranking_mode invalide ou manquant.")
+            if question.get("ranking_mode") == "top_n" and not question.get("top_n"):
+                q_errors.append("Priorisation Top N : top_n manquant.")
+
+        elif qtype == "long_answer":
+            if not (
+                question.get("evaluation_criteria")
+                or question.get("rubric")
+                or question.get("grading_criteria")
+            ):
+                q_warnings.append(
+                    "Reponse longue : aucun critere d'evaluation. Correction IA/humaine moins fiable."
+                )
+
+        audit = classify_question(question)
+        if audit.get("detected_type") == "unknown":
+            q_warnings.append("L'auditeur ne reconnait pas clairement l'intention.")
+        elif (
+            audit.get("declared_type")
+            and audit.get("detected_type")
+            and audit.get("declared_type") != audit.get("detected_type")
+        ):
+            q_warnings.append(
+                "Type declare different du type detecte : "
+                f"{audit.get('declared_type')} -> {audit.get('detected_type')}."
+            )
+
+        if q_errors:
+            errors.extend([f"Q{index}: {msg}" for msg in q_errors])
+        if q_warnings:
+            warnings.extend([f"Q{index}: {msg}" for msg in q_warnings])
+
+        question_reports.append({
+            "index": index,
+            "type": qtype,
+            "domain": question.get("domain") or "",
+            "question": text[:140],
+            "errors": q_errors,
+            "warnings": q_warnings,
+        })
+
+    return {
+        "valid": not errors,
+        "errors": errors,
+        "warnings": warnings,
+        "questions": question_reports,
+        "question_count": len(questions),
+        "error_count": len(errors),
+        "warning_count": len(warnings),
+    }
+
+
+def template_json_bytes() -> bytes:
+    payload = {
+        "quiz_title": "Modele import industriel - Quiz Formation",
+        "analysis_summary": "Modele JSON V23 enrichi.",
+        "questions": [
+            {
+                "type": "single_choice",
+                "training_scope": "CDPO",
+                "question_set_type": "Entrainement par domaine",
+                "domain": "Principes RGPD",
+                "subdomain": "Minimisation",
+                "difficulty": "Intermediaire",
+                "cognitive_level": "Application",
+                "learning_objective": "Choisir une mesure conforme au principe de minimisation.",
+                "competency": "Appliquer les principes de protection des donnees.",
+                "concept_evaluated": "Minimisation des donnees",
+                "context": {
+                    "title": "Cas pratique",
+                    "text": "Une entreprise souhaite enrichir un formulaire d'inscription avec plusieurs informations facultatives.",
+                    "collapsible": True,
+                    "expanded": False,
+                },
+                "media": {
+                    "type": "image",
+                    "url": "https://exemple.fr/illustration.png",
+                    "caption": "Illustration facultative",
+                    "alt_text": "Schema du formulaire",
+                },
+                "question": "Quelle mesure faut-il appliquer en priorite ?",
+                "options": [
+                    "Collecter toutes les donnees disponibles",
+                    "Limiter la collecte aux donnees necessaires",
+                    "Conserver les donnees sans limite",
+                    "Partager les donnees avec tous les services",
+                ],
+                "correct_answer": "B",
+                "explanation": "Le principe de minimisation limite la collecte aux donnees necessaires.",
+                "source_excerpt": "RGPD, article 5(1)(c)",
+                "remediation": "Revoir les principes de l'article 5 du RGPD.",
+                "quality_score": 100,
+            },
+            {
+                "type": "priority_ranking",
+                "training_scope": "CDPO",
+                "question_set_type": "Examen blanc",
+                "domain": "Violations de donnees",
+                "subdomain": "Gestion d'incident",
+                "difficulty": "Avance",
+                "cognitive_level": "Analyse",
+                "question": "Classez les actions de la plus prioritaire a la moins prioritaire.",
+                "items": [
+                    {"label": "A", "text": "Proteger les personnes et limiter le dommage"},
+                    {"label": "B", "text": "Preserver les preuves"},
+                    {"label": "C", "text": "Qualifier les donnees et personnes concernees"},
+                    {"label": "D", "text": "Mobiliser la gouvernance et le DPO"},
+                ],
+                "ranking_mode": "rank_all",
+                "require_justification": True,
+                "evaluation_criteria": [
+                    "Coherence de la priorisation",
+                    "Justification du raisonnement",
+                ],
+            },
+            {
+                "type": "long_answer",
+                "training_scope": "CDPO",
+                "question_set_type": "Examen blanc",
+                "domain": "Fonction DPO",
+                "subdomain": "Conseil et controle",
+                "difficulty": "Avance",
+                "cognitive_level": "Evaluation",
+                "question": "Redigez votre analyse et vos recommandations.",
+                "max_words": 350,
+                "max_points": 10,
+                "evaluation_criteria": [
+                    "Qualification correcte des enjeux",
+                    "Argumentation juridique et operationnelle",
+                    "Recommandations proportionnees",
+                ],
+            },
+        ],
+    }
+    return json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
+
+
 def template_csv_bytes() -> bytes:
-    content = """quiz_title;module;domain;subdomain;type;difficulty;cognitive_level;learning_objective;competency;concept_evaluated;question;option_a;option_b;option_c;option_d;correct_answer;accepted_answers;explanation;feedback_a;feedback_b;feedback_c;feedback_d;remediation;source_excerpt;pair_1_left;pair_1_right;pair_2_left;pair_2_right;pair_3_left;pair_3_right;context_title;context_text;context_collapsible;media_type;media_url;media_caption;media_alt_text;total_points;ranking_mode;require_justification;max_words;evaluation_criteria
+    content = """quiz_title;module;training_scope;question_set_type;domain;subdomain;type;difficulty;cognitive_level;learning_objective;competency;concept_evaluated;question;option_a;option_b;option_c;option_d;correct_answer;accepted_answers;explanation;feedback_a;feedback_b;feedback_c;feedback_d;remediation;source_excerpt;pair_1_left;pair_1_right;pair_2_left;pair_2_right;pair_3_left;pair_3_right;context_title;context_text;context_collapsible;media_type;media_url;media_caption;media_alt_text;total_points;ranking_mode;require_justification;top_n;correct_order;scale_min;scale_max;max_words;max_points;evaluation_criteria;items_json;context_expanded
 Examen civique naturalisation - Entrainement 1;Examen civique;Symboles de la Republique;Devise;single_choice;Debutant;Memorisation;Identifier les symboles de la Republique;Connaitre la devise republicaine;Devise;Quelle est la devise de la Republique francaise ?;Liberte, ordre, patrie;Liberte, egalite, fraternite;Travail, famille, patrie;Unite, force, justice;B;;La devise de la Republique francaise est Liberte, egalite, fraternite.;Incorrect. Cette formule n'est pas la devise officielle actuelle.;Correct. Liberte, egalite, fraternite est la devise officielle de la Republique francaise.;Incorrect. Cette devise est associee au regime de Vichy, pas a la Republique actuelle.;Incorrect. Cette formulation n'est pas la devise officielle.;Revoir les symboles de la Republique : devise, drapeau, hymne, Marianne.;La devise officielle de la Republique est Liberte, egalite, fraternite.;;;;;;
 Examen civique naturalisation - Entrainement 1;Examen civique;Institutions;Parlement;single_choice;Intermediaire;Comprehension;Distinguer les institutions et leurs roles;Identifier l'institution qui vote la loi;Parlement;Qui vote les lois en France ?;Le Parlement;Le President de la Republique;Le Conseil constitutionnel;Le Gouvernement;A;;Le Parlement vote les lois. Il comprend l'Assemblee nationale et le Senat.;Correct. Le Parlement est l'institution qui vote les lois.;Incorrect. Le President promulgue les lois et nomme le Premier ministre, mais il ne vote pas les lois.;Incorrect. Le Conseil constitutionnel controle la conformite des lois a la Constitution.;Incorrect. Le Gouvernement conduit la politique nationale et peut proposer des projets de loi, mais il ne vote pas les lois.;Revoir le role du Parlement, du Gouvernement et du President.;Le Parlement comprend l'Assemblee nationale et le Senat.;;;;;;
 Examen civique naturalisation - Entrainement 1;Examen civique;Symboles de la Republique;Symboles;matching;Debutant;Comprehension;Associer les symboles republicains a leur signification;Reconnaitre les symboles republicains;Symboles;Associez chaque symbole a sa signification.;;;;;Voir les paires;;Chaque symbole renvoie a une notion republicaine precise.;;;;;Revoir les principaux symboles de la Republique francaise.;Marianne represente la Republique, la Marseillaise est l'hymne national, bleu blanc rouge correspond au drapeau.;Marianne;Republique;La Marseillaise;Hymne national;Bleu, blanc, rouge;Drapeau francais

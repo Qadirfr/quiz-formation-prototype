@@ -52,6 +52,41 @@ def quiz_to_markdown(quiz: Dict[str, Any]) -> str:
         lines.append(f"**Notion evaluee :** {question.get('concept_evaluated', '')}")
         lines.append(f"**Score qualite :** {question.get('quality_score', '')}")
         lines.append("")
+        context = (
+            question.get("context")
+            or question.get("case_context")
+            or question.get("case_study")
+        )
+        if context:
+            if isinstance(context, str):
+                lines.append("### Cas pratique / contexte")
+                lines.append(context)
+            elif isinstance(context, dict):
+                lines.append(
+                    f"### {context.get('title') or 'Cas pratique / contexte'}"
+                )
+                lines.append(
+                    str(
+                        context.get("text")
+                        or context.get("content")
+                        or context.get("description")
+                        or ""
+                    )
+                )
+            lines.append("")
+
+        media = question.get("media")
+        if isinstance(media, dict):
+            media_url = media.get("url") or media.get("path") or media.get("source")
+            if media_url:
+                lines.append(f"**Média :** {media_url}")
+                if media.get("caption"):
+                    lines.append(f"**Légende :** {media.get('caption')}")
+                lines.append("")
+        elif question.get("image_url"):
+            lines.append(f"**Image :** {question.get('image_url')}")
+            lines.append("")
+
         lines.append(question.get("question", ""))
         lines.append("")
 
@@ -112,6 +147,18 @@ def quiz_to_csv_bytes(quiz: Dict[str, Any]) -> bytes:
         "reponse_correcte",
         "explication",
         "extrait_source",
+        "context_title",
+        "context_text",
+        "context_collapsible",
+        "media_type",
+        "media_url",
+        "media_caption",
+        "media_alt_text",
+        "total_points",
+        "ranking_mode",
+        "require_justification",
+        "max_words",
+        "evaluation_criteria",
     ])
 
     for i, question in enumerate(quiz.get("questions", []), start=1):
@@ -136,6 +183,51 @@ def quiz_to_csv_bytes(quiz: Dict[str, Any]) -> bytes:
             question.get("correct_answer", ""),
             question.get("explanation", ""),
             question.get("source_excerpt", ""),
+            (
+                (question.get("context") or {}).get("title", "")
+                if isinstance(question.get("context"), dict)
+                else ""
+            ),
+            (
+                (question.get("context") or {}).get("text", "")
+                if isinstance(question.get("context"), dict)
+                else str(question.get("context") or "")
+            ),
+            (
+                (question.get("context") or {}).get("collapsible", "")
+                if isinstance(question.get("context"), dict)
+                else ""
+            ),
+            (
+                (question.get("media") or {}).get("type", "")
+                if isinstance(question.get("media"), dict)
+                else ""
+            ),
+            (
+                (question.get("media") or {}).get("url", "")
+                if isinstance(question.get("media"), dict)
+                else question.get("image_url", "")
+            ),
+            (
+                (question.get("media") or {}).get("caption", "")
+                if isinstance(question.get("media"), dict)
+                else ""
+            ),
+            (
+                (question.get("media") or {}).get("alt_text", "")
+                if isinstance(question.get("media"), dict)
+                else ""
+            ),
+            question.get("total_points", ""),
+            question.get("ranking_mode", ""),
+            question.get("require_justification", ""),
+            question.get("max_words", ""),
+            " | ".join(
+                str(item)
+                for item in (question.get("evaluation_criteria") or [])
+            )
+            if isinstance(question.get("evaluation_criteria"), list)
+            else str(question.get("evaluation_criteria") or ""),
         ])
 
     return output.getvalue().encode("utf-8-sig")

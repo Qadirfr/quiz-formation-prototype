@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import math
 import json
@@ -56,6 +57,7 @@ from utils.session_db import (
     update_session_status,
 )
 from utils.question_bank import (
+    add_question_to_bank,
     add_quiz_to_bank,
     build_quiz_from_bank,
     get_question_bank_stats,

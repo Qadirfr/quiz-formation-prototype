@@ -3146,15 +3146,16 @@ def trainer_app() -> None:
             placeholder="Exemple : vérifier que l'apprenant sait appliquer une notion à une situation concrète.",
         )
 
-    tab_input, tab_analysis, tab_quiz, tab_results, tab_history, tab_export, tab_bank, tab_sessions, tab_settings = st.tabs([
+    tab_input, tab_manual, tab_analysis, tab_quiz, tab_results, tab_history, tab_export, tab_bank, tab_sessions, tab_settings = st.tabs([
         "1. Source",
-        "2. Analyse pédagogique",
-        "3. Quiz créateur",
-        "4. Résultats",
-        "5. Historique quiz",
-        "6. Export",
-        "7. Banque de questions",
-        "8. Sessions",
+        "2. Création manuelle",
+        "3. Analyse pédagogique",
+        "4. Quiz créateur",
+        "5. Résultats",
+        "6. Historique quiz",
+        "7. Export",
+        "8. Banque de questions",
+        "9. Sessions",
         "Paramètres accès",
     ])
 

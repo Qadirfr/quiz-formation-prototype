@@ -2403,7 +2403,36 @@ def render_creator_question(question: Dict[str, Any], index: int) -> None:
         pairs = question.get("pairs") or []
         options = question.get("options") or []
 
-        if is_fill_blank_question(question):
+        if is_point_allocation_question(question):
+            items = extract_activity_items(question)
+            st.markdown("**Répartition de points**")
+            st.caption(
+                f"Total à répartir : {question.get('total_points') or 'non défini'}"
+            )
+            for item in items:
+                st.write(f"{item.get('label')}. {item.get('text')}")
+            if question.get("require_justification", True):
+                st.caption("Une justification de l'arbitrage est demandée.")
+        elif is_priority_ranking_question(question):
+            items = extract_activity_items(question)
+            st.markdown("**Priorisation**")
+            mode = question.get("ranking_mode") or "non défini"
+            st.caption(f"Mode : {mode}")
+            for item in items:
+                st.write(f"{item.get('label')}. {item.get('text')}")
+            if question.get("require_justification", True):
+                st.caption("Une justification de l'arbitrage est demandée.")
+        elif is_long_answer_question(question):
+            st.markdown("**Réponse rédigée — correction différée**")
+            criteria = question.get("evaluation_criteria") or question.get("rubric") or []
+            if criteria:
+                st.caption("Critères d'évaluation :")
+                if isinstance(criteria, list):
+                    for criterion in criteria:
+                        st.write(f"- {criterion}")
+                else:
+                    st.write(criteria)
+        elif is_fill_blank_question(question):
             count = fill_blank_count(question)
             st.markdown(fill_blank_prompt_text(question))
             st.caption(f"{count} champ(s) à compléter.")
@@ -2464,7 +2493,9 @@ def render_creator_question(question: Dict[str, Any], index: int) -> None:
 def render_test_question(question: Dict[str, Any], index: int) -> Any:
     qtype = question.get("type", "")
     st.markdown(f"### Question {index}")
-    if is_fill_blank_question(question):
+    if is_point_allocation_question(question) or is_priority_ranking_question(question):
+        st.markdown(structured_activity_prompt_text(question))
+    elif is_fill_blank_question(question):
         st.markdown(fill_blank_prompt_text(question))
     elif is_self_assessment_question(question):
         st.markdown(self_assessment_prompt_text(question))
@@ -2475,6 +2506,85 @@ def render_test_question(question: Dict[str, Any], index: int) -> Any:
 
     options = question.get("options") or []
     pairs = question.get("pairs") or []
+
+    if is_point_allocation_question(question):
+        items = extract_activity_items(question)
+        total_points = int(question.get("total_points") or 0)
+        st.caption(
+            f"Répartis exactement {total_points} point(s) entre les critères ci-dessous."
+        )
+        allocations = {}
+        for item in items:
+            allocations[str(item.get("label") or "").upper()] = st.number_input(
+                f"{item.get('label')}. {item.get('text')}",
+                min_value=0,
+                max_value=max(total_points, 0),
+                value=0,
+                step=1,
+                key=f"point_allocation_{index}_{item.get('label')}",
+            )
+        used = sum(int(value or 0) for value in allocations.values())
+        if total_points:
+            st.caption(f"Total réparti : {used} / {total_points}")
+        justification = st.text_area(
+            "Justifie ton arbitrage",
+            key=f"point_allocation_justification_{index}",
+            height=150,
+        )
+        return {
+            "allocations": allocations,
+            "justification": justification,
+            "total": used,
+        }
+
+    if is_priority_ranking_question(question):
+        items = extract_activity_items(question)
+        labels = [str(item.get("label") or "").upper() for item in items]
+        display = {
+            str(item.get("label") or "").upper():
+            f"{str(item.get('label') or '').upper()}. {item.get('text', '')}"
+            for item in items
+        }
+        mode = str(question.get("ranking_mode") or "rank_all")
+        positions = len(items)
+        if mode == "top_n":
+            positions = min(int(question.get("top_n") or len(items)), len(items))
+        st.caption(
+            "Classe les éléments du plus prioritaire au moins prioritaire."
+            if mode == "rank_all"
+            else f"Sélectionne et classe les {positions} priorités principales."
+        )
+        ranking = []
+        for position_index in range(positions):
+            selected = st.selectbox(
+                f"Priorité {position_index + 1}",
+                options=[""] + labels,
+                format_func=lambda value, mapping=display: (
+                    "Choisir…" if not value else mapping.get(value, value)
+                ),
+                key=f"priority_ranking_{index}_{position_index}",
+            )
+            if selected:
+                ranking.append(selected)
+        justification = st.text_area(
+            "Justifie ton arbitrage",
+            key=f"priority_ranking_justification_{index}",
+            height=150,
+        )
+        return {
+            "ranking": ranking,
+            "justification": justification,
+        }
+
+    if is_long_answer_question(question):
+        response = st.text_area(
+            "Votre réponse rédigée",
+            key=f"long_answer_{index}",
+            height=280,
+            placeholder="Rédigez votre réponse de manière structurée...",
+        )
+        st.caption(f"{len(response.split())} mot(s)")
+        return response
 
     if is_fill_blank_question(question):
         count = fill_blank_count(question)
@@ -2595,7 +2705,9 @@ def render_test_question(question: Dict[str, Any], index: int) -> Any:
 def render_session_question(question: Dict[str, Any], index: int, session_id: int) -> Any:
     qtype = question.get("type", "")
     st.markdown(f"### Question {index}")
-    if is_fill_blank_question(question):
+    if is_point_allocation_question(question) or is_priority_ranking_question(question):
+        st.markdown(structured_activity_prompt_text(question))
+    elif is_fill_blank_question(question):
         st.markdown(fill_blank_prompt_text(question))
     elif is_self_assessment_question(question):
         st.markdown(self_assessment_prompt_text(question))
@@ -2607,6 +2719,80 @@ def render_session_question(question: Dict[str, Any], index: int, session_id: in
     options = question.get("options") or []
     pairs = question.get("pairs") or []
     prefix = f"session_{session_id}_{index}"
+
+    if is_point_allocation_question(question):
+        items = extract_activity_items(question)
+        total_points = int(question.get("total_points") or 0)
+        allocations = {}
+        st.caption(
+            f"Répartis exactement {total_points} point(s) entre les critères ci-dessous."
+        )
+        for item in items:
+            allocations[str(item.get("label") or "").upper()] = st.number_input(
+                f"{item.get('label')}. {item.get('text')}",
+                min_value=0,
+                max_value=max(total_points, 0),
+                value=0,
+                step=1,
+                key=f"{prefix}_point_allocation_{item.get('label')}",
+            )
+        used = sum(int(value or 0) for value in allocations.values())
+        if total_points:
+            st.caption(f"Total réparti : {used} / {total_points}")
+        justification = st.text_area(
+            "Justifie ton arbitrage",
+            key=f"{prefix}_point_allocation_justification",
+            height=150,
+        )
+        return {
+            "allocations": allocations,
+            "justification": justification,
+            "total": used,
+        }
+
+    if is_priority_ranking_question(question):
+        items = extract_activity_items(question)
+        labels = [str(item.get("label") or "").upper() for item in items]
+        display = {
+            str(item.get("label") or "").upper():
+            f"{str(item.get('label') or '').upper()}. {item.get('text', '')}"
+            for item in items
+        }
+        mode = str(question.get("ranking_mode") or "rank_all")
+        positions = len(items)
+        if mode == "top_n":
+            positions = min(int(question.get("top_n") or len(items)), len(items))
+        ranking = []
+        for position_index in range(positions):
+            selected = st.selectbox(
+                f"Priorité {position_index + 1}",
+                options=[""] + labels,
+                format_func=lambda value, mapping=display: (
+                    "Choisir…" if not value else mapping.get(value, value)
+                ),
+                key=f"{prefix}_priority_ranking_{position_index}",
+            )
+            if selected:
+                ranking.append(selected)
+        justification = st.text_area(
+            "Justifie ton arbitrage",
+            key=f"{prefix}_priority_ranking_justification",
+            height=150,
+        )
+        return {
+            "ranking": ranking,
+            "justification": justification,
+        }
+
+    if is_long_answer_question(question):
+        response = st.text_area(
+            "Votre réponse rédigée",
+            key=f"{prefix}_long_answer",
+            height=280,
+            placeholder="Rédigez votre réponse de manière structurée...",
+        )
+        st.caption(f"{len(response.split())} mot(s)")
+        return response
 
     if is_fill_blank_question(question):
         count = fill_blank_count(question)

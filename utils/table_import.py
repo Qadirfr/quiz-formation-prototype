@@ -860,9 +860,144 @@ def template_json_bytes() -> bytes:
 
 
 def template_csv_bytes() -> bytes:
-    content = """quiz_title;module;training_scope;question_set_type;domain;subdomain;type;difficulty;cognitive_level;learning_objective;competency;concept_evaluated;question;option_a;option_b;option_c;option_d;correct_answer;accepted_answers;explanation;feedback_a;feedback_b;feedback_c;feedback_d;remediation;source_excerpt;pair_1_left;pair_1_right;pair_2_left;pair_2_right;pair_3_left;pair_3_right;context_title;context_text;context_collapsible;media_type;media_url;media_caption;media_alt_text;total_points;ranking_mode;require_justification;top_n;correct_order;scale_min;scale_max;max_words;max_points;evaluation_criteria;items_json;context_expanded
-Examen civique naturalisation - Entrainement 1;Examen civique;Symboles de la Republique;Devise;single_choice;Debutant;Memorisation;Identifier les symboles de la Republique;Connaitre la devise republicaine;Devise;Quelle est la devise de la Republique francaise ?;Liberte, ordre, patrie;Liberte, egalite, fraternite;Travail, famille, patrie;Unite, force, justice;B;;La devise de la Republique francaise est Liberte, egalite, fraternite.;Incorrect. Cette formule n'est pas la devise officielle actuelle.;Correct. Liberte, egalite, fraternite est la devise officielle de la Republique francaise.;Incorrect. Cette devise est associee au regime de Vichy, pas a la Republique actuelle.;Incorrect. Cette formulation n'est pas la devise officielle.;Revoir les symboles de la Republique : devise, drapeau, hymne, Marianne.;La devise officielle de la Republique est Liberte, egalite, fraternite.;;;;;;
-Examen civique naturalisation - Entrainement 1;Examen civique;Institutions;Parlement;single_choice;Intermediaire;Comprehension;Distinguer les institutions et leurs roles;Identifier l'institution qui vote la loi;Parlement;Qui vote les lois en France ?;Le Parlement;Le President de la Republique;Le Conseil constitutionnel;Le Gouvernement;A;;Le Parlement vote les lois. Il comprend l'Assemblee nationale et le Senat.;Correct. Le Parlement est l'institution qui vote les lois.;Incorrect. Le President promulgue les lois et nomme le Premier ministre, mais il ne vote pas les lois.;Incorrect. Le Conseil constitutionnel controle la conformite des lois a la Constitution.;Incorrect. Le Gouvernement conduit la politique nationale et peut proposer des projets de loi, mais il ne vote pas les lois.;Revoir le role du Parlement, du Gouvernement et du President.;Le Parlement comprend l'Assemblee nationale et le Senat.;;;;;;
-Examen civique naturalisation - Entrainement 1;Examen civique;Symboles de la Republique;Symboles;matching;Debutant;Comprehension;Associer les symboles republicains a leur signification;Reconnaitre les symboles republicains;Symboles;Associez chaque symbole a sa signification.;;;;;Voir les paires;;Chaque symbole renvoie a une notion republicaine precise.;;;;;Revoir les principaux symboles de la Republique francaise.;Marianne represente la Republique, la Marseillaise est l'hymne national, bleu blanc rouge correspond au drapeau.;Marianne;Republique;La Marseillaise;Hymne national;Bleu, blanc, rouge;Drapeau francais
-"""
-    return content.encode("utf-8-sig")
+    headers = [
+        "quiz_title",
+        "module",
+        "training_scope",
+        "question_set_type",
+        "domain",
+        "subdomain",
+        "type",
+        "difficulty",
+        "cognitive_level",
+        "learning_objective",
+        "competency",
+        "concept_evaluated",
+        "question",
+        "option_a",
+        "option_b",
+        "option_c",
+        "option_d",
+        "option_e",
+        "option_f",
+        "correct_answer",
+        "accepted_answers",
+        "explanation",
+        "feedback_a",
+        "feedback_b",
+        "feedback_c",
+        "feedback_d",
+        "feedback_e",
+        "feedback_f",
+        "remediation",
+        "source_excerpt",
+        "pairs_json",
+        "context_title",
+        "context_text",
+        "context_collapsible",
+        "context_expanded",
+        "media_type",
+        "media_url",
+        "media_caption",
+        "media_alt_text",
+        "total_points",
+        "ranking_mode",
+        "top_n",
+        "require_justification",
+        "correct_order",
+        "scale_min",
+        "scale_max",
+        "max_words",
+        "max_points",
+        "evaluation_criteria",
+        "items_json",
+    ]
+
+    sample_rows = [
+        {
+            "quiz_title": "Modele import industriel - CDPO",
+            "module": "RGPD",
+            "training_scope": "CDPO",
+            "question_set_type": "Entrainement par domaine",
+            "domain": "Principes RGPD",
+            "subdomain": "Minimisation",
+            "type": "single_choice",
+            "difficulty": "Intermediaire",
+            "cognitive_level": "Application",
+            "learning_objective": "Choisir une mesure conforme au principe de minimisation.",
+            "competency": "Appliquer les principes de protection des donnees.",
+            "concept_evaluated": "Minimisation des donnees",
+            "question": "Quelle mesure faut-il appliquer en priorite ?",
+            "option_a": "Collecter toutes les donnees disponibles",
+            "option_b": "Limiter la collecte aux donnees necessaires",
+            "option_c": "Conserver les donnees sans limite",
+            "option_d": "Partager les donnees avec tous les services",
+            "correct_answer": "B",
+            "explanation": "Le principe de minimisation limite la collecte aux donnees necessaires.",
+            "remediation": "Revoir les principes de l'article 5 du RGPD.",
+            "source_excerpt": "RGPD, article 5(1)(c)",
+            "context_title": "Cas pratique",
+            "context_text": "Une entreprise souhaite enrichir un formulaire d'inscription avec plusieurs informations facultatives.",
+            "context_collapsible": "true",
+            "context_expanded": "false",
+            "media_type": "image",
+            "media_url": "https://exemple.fr/illustration.png",
+            "media_caption": "Illustration facultative",
+            "media_alt_text": "Schema du formulaire",
+        },
+        {
+            "quiz_title": "Modele import industriel - CDPO",
+            "module": "RGPD",
+            "training_scope": "CDPO",
+            "question_set_type": "Examen blanc",
+            "domain": "Violations de donnees",
+            "subdomain": "Gestion d'incident",
+            "type": "priority_ranking",
+            "difficulty": "Avance",
+            "cognitive_level": "Analyse",
+            "question": "Classez les actions de la plus prioritaire a la moins prioritaire.",
+            "ranking_mode": "rank_all",
+            "require_justification": "true",
+            "evaluation_criteria": "Coherence de la priorisation | Justification du raisonnement",
+            "items_json": json.dumps([
+                {"label": "A", "text": "Proteger les personnes et limiter le dommage"},
+                {"label": "B", "text": "Preserver les preuves"},
+                {"label": "C", "text": "Qualifier les donnees et personnes concernees"},
+                {"label": "D", "text": "Mobiliser la gouvernance et le DPO"},
+            ], ensure_ascii=False),
+        },
+        {
+            "quiz_title": "Modele import industriel - CDPO",
+            "module": "RGPD",
+            "training_scope": "CDPO",
+            "question_set_type": "Examen blanc",
+            "domain": "Fonction DPO",
+            "subdomain": "Conseil et controle",
+            "type": "long_answer",
+            "difficulty": "Avance",
+            "cognitive_level": "Evaluation",
+            "question": "Redigez votre analyse et vos recommandations.",
+            "max_words": "350",
+            "max_points": "10",
+            "evaluation_criteria": (
+                "Qualification correcte des enjeux | "
+                "Argumentation juridique et operationnelle | "
+                "Recommandations proportionnees"
+            ),
+        },
+    ]
+
+    output = io.StringIO()
+    writer = csv.DictWriter(
+        output,
+        fieldnames=headers,
+        delimiter=";",
+        extrasaction="ignore",
+        lineterminator="\n",
+    )
+    writer.writeheader()
+    for row in sample_rows:
+        writer.writerow(row)
+
+    return output.getvalue().encode("utf-8-sig")
+

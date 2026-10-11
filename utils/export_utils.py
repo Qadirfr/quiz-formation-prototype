@@ -128,106 +128,162 @@ def quiz_to_markdown_bytes(quiz: Dict[str, Any]) -> bytes:
 
 def quiz_to_csv_bytes(quiz: Dict[str, Any]) -> bytes:
     output = io.StringIO()
-    writer = csv.writer(output, delimiter=";")
-    writer.writerow([
+    fieldnames = [
         "numero",
+        "quiz_title",
+        "training_scope",
+        "question_set_type",
+        "domain",
+        "subdomain",
         "type",
-        "niveau",
-        "niveau_cognitif",
-        "competence_evaluee",
-        "notion_evaluee",
-        "score_qualite",
-        "notes_qualite",
+        "difficulty",
+        "cognitive_level",
+        "learning_objective",
+        "competency",
+        "concept_evaluated",
         "question",
         "option_a",
         "option_b",
         "option_c",
         "option_d",
-        "paires_json",
-        "reponse_correcte",
-        "explication",
-        "extrait_source",
+        "option_e",
+        "option_f",
+        "correct_answer",
+        "accepted_answers",
+        "explanation",
+        "remediation",
+        "source_excerpt",
+        "pairs_json",
+        "items_json",
         "context_title",
         "context_text",
         "context_collapsible",
+        "context_expanded",
         "media_type",
         "media_url",
         "media_caption",
         "media_alt_text",
         "total_points",
         "ranking_mode",
+        "top_n",
         "require_justification",
+        "correct_order",
+        "scale_min",
+        "scale_max",
         "max_words",
+        "max_points",
         "evaluation_criteria",
-    ])
+        "quality_score",
+        "quality_notes",
+    ]
+    writer = csv.DictWriter(
+        output,
+        fieldnames=fieldnames,
+        delimiter=";",
+        extrasaction="ignore",
+        lineterminator="\n",
+    )
+    writer.writeheader()
 
+    title = quiz.get("quiz_title", "Quiz")
     for i, question in enumerate(quiz.get("questions", []), start=1):
         options: List[Any] = question.get("options") or []
         text_options = [_option_to_text(o) for o in options]
-        padded_options = (text_options + ["", "", "", ""])[:4]
-        pairs = question.get("pairs") or []
-        pairs_json = json.dumps(pairs, ensure_ascii=False)
+        padded_options = (text_options + [""] * 6)[:6]
 
-        writer.writerow([
-            i,
-            question.get("type", ""),
-            question.get("difficulty", ""),
-            question.get("cognitive_level", ""),
-            question.get("competency", ""),
-            question.get("concept_evaluated", ""),
-            question.get("quality_score", ""),
-            question.get("quality_notes", ""),
-            question.get("question", ""),
-            *padded_options,
-            pairs_json,
-            question.get("correct_answer", ""),
-            question.get("explanation", ""),
-            question.get("source_excerpt", ""),
-            (
-                (question.get("context") or {}).get("title", "")
-                if isinstance(question.get("context"), dict)
-                else ""
-            ),
-            (
-                (question.get("context") or {}).get("text", "")
-                if isinstance(question.get("context"), dict)
-                else str(question.get("context") or "")
-            ),
-            (
-                (question.get("context") or {}).get("collapsible", "")
-                if isinstance(question.get("context"), dict)
-                else ""
-            ),
-            (
-                (question.get("media") or {}).get("type", "")
-                if isinstance(question.get("media"), dict)
-                else ""
-            ),
-            (
-                (question.get("media") or {}).get("url", "")
-                if isinstance(question.get("media"), dict)
-                else question.get("image_url", "")
-            ),
-            (
-                (question.get("media") or {}).get("caption", "")
-                if isinstance(question.get("media"), dict)
-                else ""
-            ),
-            (
-                (question.get("media") or {}).get("alt_text", "")
-                if isinstance(question.get("media"), dict)
-                else ""
-            ),
-            question.get("total_points", ""),
-            question.get("ranking_mode", ""),
-            question.get("require_justification", ""),
-            question.get("max_words", ""),
-            " | ".join(
-                str(item)
-                for item in (question.get("evaluation_criteria") or [])
+        context = question.get("context")
+        if isinstance(context, dict):
+            context_title = context.get("title", "")
+            context_text = (
+                context.get("text")
+                or context.get("content")
+                or context.get("description")
+                or ""
             )
-            if isinstance(question.get("evaluation_criteria"), list)
-            else str(question.get("evaluation_criteria") or ""),
-        ])
+            context_collapsible = context.get("collapsible", "")
+            context_expanded = context.get("expanded", "")
+        else:
+            context_title = ""
+            context_text = str(context or "")
+            context_collapsible = ""
+            context_expanded = ""
+
+        media = question.get("media")
+        if isinstance(media, dict):
+            media_type = media.get("type", "")
+            media_url = media.get("url") or media.get("path") or media.get("source") or ""
+            media_caption = media.get("caption", "")
+            media_alt = media.get("alt_text") or media.get("alt") or ""
+        else:
+            media_type = ""
+            media_url = question.get("image_url", "")
+            media_caption = question.get("image_caption", "")
+            media_alt = question.get("image_alt_text", "")
+
+        accepted = question.get("accepted_answers") or []
+        if isinstance(accepted, list):
+            accepted_text = " | ".join(str(item) for item in accepted)
+        else:
+            accepted_text = str(accepted or "")
+
+        criteria = question.get("evaluation_criteria") or []
+        if isinstance(criteria, list):
+            criteria_text = " | ".join(str(item) for item in criteria)
+        else:
+            criteria_text = str(criteria or "")
+
+        correct_order = question.get("correct_order") or question.get("expected_order") or ""
+        if isinstance(correct_order, list):
+            correct_order = "".join(str(item) for item in correct_order)
+
+        writer.writerow({
+            "numero": i,
+            "quiz_title": title,
+            "training_scope": question.get("training_scope", ""),
+            "question_set_type": question.get("question_set_type", ""),
+            "domain": question.get("domain", ""),
+            "subdomain": question.get("subdomain", ""),
+            "type": question.get("type", ""),
+            "difficulty": question.get("difficulty", ""),
+            "cognitive_level": question.get("cognitive_level", ""),
+            "learning_objective": question.get("learning_objective", ""),
+            "competency": question.get("competency", ""),
+            "concept_evaluated": question.get("concept_evaluated", ""),
+            "question": question.get("question", ""),
+            "option_a": padded_options[0],
+            "option_b": padded_options[1],
+            "option_c": padded_options[2],
+            "option_d": padded_options[3],
+            "option_e": padded_options[4],
+            "option_f": padded_options[5],
+            "correct_answer": question.get("correct_answer", ""),
+            "accepted_answers": accepted_text,
+            "explanation": question.get("explanation", ""),
+            "remediation": question.get("remediation", ""),
+            "source_excerpt": question.get("source_excerpt", ""),
+            "pairs_json": json.dumps(question.get("pairs") or [], ensure_ascii=False),
+            "items_json": json.dumps(question.get("items") or [], ensure_ascii=False),
+            "context_title": context_title,
+            "context_text": context_text,
+            "context_collapsible": context_collapsible,
+            "context_expanded": context_expanded,
+            "media_type": media_type,
+            "media_url": media_url,
+            "media_caption": media_caption,
+            "media_alt_text": media_alt,
+            "total_points": question.get("total_points", ""),
+            "ranking_mode": question.get("ranking_mode", ""),
+            "top_n": question.get("top_n", ""),
+            "require_justification": question.get("require_justification", ""),
+            "correct_order": correct_order,
+            "scale_min": question.get("scale_min", ""),
+            "scale_max": question.get("scale_max", ""),
+            "max_words": question.get("max_words", ""),
+            "max_points": question.get("max_points", ""),
+            "evaluation_criteria": criteria_text,
+            "quality_score": question.get("quality_score", ""),
+            "quality_notes": question.get("quality_notes", ""),
+        })
 
     return output.getvalue().encode("utf-8-sig")
+

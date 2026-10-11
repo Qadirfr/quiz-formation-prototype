@@ -71,6 +71,8 @@ from utils.question_bank import (
     list_question_bank_records_for_audit,
     build_safe_cdpo_migration_preview,
     apply_safe_cdpo_question_migration,
+    build_cdpo_completion_preview,
+    apply_cdpo_completion_patch,
     list_question_schema_migration_log,
     select_adaptive_questions,
     select_random_questions,
@@ -820,6 +822,9 @@ def is_ordering_type(qtype: Any) -> bool:
 
 
 def is_ordering_question(question: Dict[str, Any]) -> bool:
+    qtype = normalize_answer(question.get("type", "")).replace(" ", "_")
+    if qtype in {"priority_ranking", "point_allocation"}:
+        return False
     if is_ordering_type(question.get("type", "")):
         return True
 
@@ -838,6 +843,66 @@ def is_ordering_question(question: Dict[str, Any]) -> bool:
         "ordre attendu",
     ]
     return any(cue in text for cue in cues)
+
+
+POINT_ALLOCATION_TYPES = {
+    "point_allocation",
+    "allocation_points",
+}
+
+
+def is_point_allocation_question(question: Dict[str, Any]) -> bool:
+    qtype = normalize_answer(question.get("type", "")).replace(" ", "_")
+    return qtype in POINT_ALLOCATION_TYPES
+
+
+PRIORITY_RANKING_TYPES = {
+    "priority_ranking",
+    "prioritization",
+    "priorisation",
+}
+
+
+def is_priority_ranking_question(question: Dict[str, Any]) -> bool:
+    qtype = normalize_answer(question.get("type", "")).replace(" ", "_")
+    return qtype in PRIORITY_RANKING_TYPES
+
+
+def is_long_answer_question(question: Dict[str, Any]) -> bool:
+    qtype = normalize_answer(question.get("type", "")).replace(" ", "_")
+    return qtype in {"long_answer", "essay", "essay_response", "open_answer"}
+
+
+def extract_activity_items(question: Dict[str, Any]) -> List[Dict[str, str]]:
+    raw_items = question.get("items") or []
+    parsed: List[Dict[str, str]] = []
+
+    if isinstance(raw_items, list):
+        for idx, item in enumerate(raw_items):
+            if isinstance(item, dict):
+                label = str(item.get("label") or option_label(idx)).strip().upper()
+                text = str(item.get("text") or item.get("value") or "").strip()
+            else:
+                label = option_label(idx)
+                text = str(item).strip()
+            if text:
+                parsed.append({"label": label, "text": text})
+
+    return parsed
+
+
+def structured_activity_prompt_text(question: Dict[str, Any]) -> str:
+    text = str(question.get("question") or "")
+    marker = re.search(
+        r"\s*chantiers?\s+à\s+prioriser\s*:",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if marker:
+        clean = text[:marker.start()].strip()
+        if clean:
+            return clean
+    return text
 
 
 SELF_ASSESSMENT_TYPES = {
@@ -1301,6 +1366,78 @@ def evaluate_answer(question: Dict[str, Any], user_answer: Any) -> Dict[str, Any
 
     if is_fill_blank_question(question):
         return evaluate_fill_blank(question, user_answer)
+
+    if is_point_allocation_question(question):
+        given = user_answer if isinstance(user_answer, dict) else {}
+        allocations = given.get("allocations") if isinstance(given, dict) else {}
+        allocations = allocations if isinstance(allocations, dict) else {}
+        expected_total = int(question.get("total_points") or 0)
+        received_total = 0
+        for value in allocations.values():
+            try:
+                received_total += int(value or 0)
+            except Exception:
+                pass
+
+        if expected_total and received_total != expected_total:
+            feedback = (
+                f"Répartition enregistrée, mais le total est de {received_total} "
+                f"au lieu de {expected_total}. La réponse reste à corriger."
+            )
+        else:
+            feedback = (
+                "Répartition et justification enregistrées. "
+                "Cette réponse nécessite une correction différée."
+            )
+
+        return {
+            "score": 0.0,
+            "is_correct": None,
+            "correct_answer": question.get("evaluation_criteria") or "",
+            "selected_feedback": feedback,
+            "correct_feedback": question.get("explanation", ""),
+        }
+
+    if is_priority_ranking_question(question):
+        given = user_answer if isinstance(user_answer, dict) else {}
+        ranking = given.get("ranking") if isinstance(given, dict) else []
+        ranking = ranking if isinstance(ranking, list) else []
+        unique_count = len(set(str(item) for item in ranking if str(item)))
+        expected_count = len(extract_activity_items(question))
+        mode = str(question.get("ranking_mode") or "rank_all")
+
+        if mode == "rank_all" and expected_count and unique_count != expected_count:
+            feedback = (
+                f"Classement enregistré mais incomplet : {unique_count} élément(s) "
+                f"sur {expected_count}. Cette réponse reste à corriger."
+            )
+        else:
+            feedback = (
+                "Classement et justification enregistrés. "
+                "Cette réponse nécessite une correction différée."
+            )
+
+        return {
+            "score": 0.0,
+            "is_correct": None,
+            "correct_answer": question.get("evaluation_criteria") or "",
+            "selected_feedback": feedback,
+            "correct_feedback": question.get("explanation", ""),
+        }
+
+    if is_long_answer_question(question):
+        text_answer = str(user_answer or "").strip()
+        return {
+            "score": 0.0,
+            "is_correct": None,
+            "correct_answer": question.get("evaluation_criteria") or question.get("rubric") or "",
+            "selected_feedback": (
+                "Réponse rédigée enregistrée. Elle est en attente de correction."
+                if text_answer
+                else "Aucune réponse rédigée n'a été saisie."
+            ),
+            "correct_feedback": question.get("explanation", ""),
+        }
 
     if is_self_assessment_question(question):
         items = extract_self_assessment_items(question)

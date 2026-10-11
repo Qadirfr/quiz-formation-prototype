@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import math
 import json
@@ -56,6 +57,7 @@ from utils.session_db import (
     update_session_status,
 )
 from utils.question_bank import (
+    add_question_to_bank,
     add_quiz_to_bank,
     build_quiz_from_bank,
     get_question_bank_stats,
@@ -3041,6 +3043,67 @@ def render_session_correction(answer: Dict[str, Any], question: Dict[str, Any]) 
         st.warning(answer.get("selected_feedback") or "Réponse enregistrée, à corriger manuellement.")
         st.info(answer.get("correct_feedback") or question.get("explanation", "") or "Correction indisponible.")
 
+def _manual_lines(value: str) -> List[str]:
+    return [
+        line.strip()
+        for line in str(value or "").splitlines()
+        if line.strip()
+    ]
+
+
+def _manual_lettered_items(lines: List[str]) -> List[Dict[str, str]]:
+    return [
+        {"label": option_label(index), "text": text}
+        for index, text in enumerate(lines)
+        if text
+    ]
+
+
+def _manual_pairs(value: str) -> List[Dict[str, str]]:
+    pairs = []
+    for line in _manual_lines(value):
+        if "=>" not in line:
+            continue
+        left, right = line.split("=>", 1)
+        left = left.strip()
+        right = right.strip()
+        if left and right:
+            pairs.append({"left": left, "right": right})
+    return pairs
+
+
+def _manual_image_data_url(uploaded_file: Any) -> str:
+    if uploaded_file is None:
+        return ""
+    raw = uploaded_file.getvalue()
+    if not raw:
+        return ""
+    if len(raw) > 2 * 1024 * 1024:
+        raise ValueError(
+            "Image trop volumineuse pour un stockage intégré. "
+            "Utilise une image de moins de 2 Mo ou une URL."
+        )
+    mime = getattr(uploaded_file, "type", None) or "image/png"
+    encoded = base64.b64encode(raw).decode("ascii")
+    return f"data:{mime};base64,{encoded}"
+
+
+def _manual_type_label(value: str) -> str:
+    labels = {
+        "single_choice": "QCM — choix unique",
+        "true_false": "Vrai / Faux",
+        "matching": "Appariement",
+        "ordering": "Ordonnancement",
+        "fill_blank": "Question à trous",
+        "self_assessment": "Auto-positionnement",
+        "point_allocation": "Répartition de points",
+        "priority_ranking": "Priorisation / classement",
+        "short_answer": "Réponse libre courte",
+        "long_answer": "Réponse rédigée longue",
+    }
+    return labels.get(value, value)
+
+
 def trainer_app() -> None:
     st.title("Espace formateur")
     st.caption("Création, import enrichi, sauvegarde, restitutions, résultats et exports.")
@@ -3083,15 +3146,16 @@ def trainer_app() -> None:
             placeholder="Exemple : vérifier que l'apprenant sait appliquer une notion à une situation concrète.",
         )
 
-    tab_input, tab_analysis, tab_quiz, tab_results, tab_history, tab_export, tab_bank, tab_sessions, tab_settings = st.tabs([
+    tab_input, tab_manual, tab_analysis, tab_quiz, tab_results, tab_history, tab_export, tab_bank, tab_sessions, tab_settings = st.tabs([
         "1. Source",
-        "2. Analyse pédagogique",
-        "3. Quiz créateur",
-        "4. Résultats",
-        "5. Historique quiz",
-        "6. Export",
-        "7. Banque de questions",
-        "8. Sessions",
+        "2. Création manuelle",
+        "3. Analyse pédagogique",
+        "4. Quiz créateur",
+        "5. Résultats",
+        "6. Historique quiz",
+        "7. Export",
+        "8. Banque de questions",
+        "9. Sessions",
         "Paramètres accès",
     ])
 
@@ -3198,6 +3262,628 @@ def trainer_app() -> None:
                     st.info(result.get("hint", "Vérifie les paramètres puis réessaie."))
                 else:
                     st.success("Quiz généré avec contrôle qualité.")
+
+    with tab_manual:
+        st.subheader("Création manuelle enrichie")
+        st.caption(
+            "Crée une question complète sans CSV : cas pratique repliable, image ou illustration, "
+            "QCM, réponse libre, priorisation, ordonnancement, appariement, etc. "
+            "Tu peux ensuite l'ajouter au brouillon de quiz ou directement à la banque."
+        )
+
+        manual_title = st.text_input(
+            "Titre du quiz / série",
+            value=st.session_state.get("manual_quiz_title", "Quiz manuel CDPO"),
+            key="manual_quiz_title",
+        )
+
+        meta1, meta2, meta3 = st.columns(3)
+        with meta1:
+            manual_training_scope = st.selectbox(
+                "Formation",
+                ["CDPO", "Naturalisation civique", "Autre"],
+                index=0,
+                key="manual_training_scope",
+            )
+            if manual_training_scope == "Autre":
+                manual_training_scope = st.text_input(
+                    "Nom de la formation",
+                    key="manual_training_scope_other",
+                ).strip() or "Autre"
+        with meta2:
+            manual_set_type = st.selectbox(
+                "Type de série",
+                [
+                    "Banque autonome",
+                    "Pré-assessment",
+                    "Entraînement par domaine",
+                    "Renforcement sous-domaines",
+                    "Examen blanc",
+                    "Autre",
+                ],
+                index=0,
+                key="manual_question_set_type",
+            )
+            if manual_set_type == "Autre":
+                manual_set_type = st.text_input(
+                    "Nom du type de série",
+                    key="manual_question_set_type_other",
+                ).strip() or "Autre"
+        with meta3:
+            manual_type = st.selectbox(
+                "Type de question",
+                [
+                    "single_choice",
+                    "true_false",
+                    "short_answer",
+                    "long_answer",
+                    "priority_ranking",
+                    "point_allocation",
+                    "ordering",
+                    "matching",
+                    "fill_blank",
+                    "self_assessment",
+                ],
+                format_func=_manual_type_label,
+                key="manual_question_type",
+            )
+
+        tax1, tax2, tax3 = st.columns(3)
+        with tax1:
+            manual_domain = st.text_input(
+                "Domaine",
+                value="",
+                placeholder="Exemple : Fonction DPO",
+                key="manual_domain",
+            )
+        with tax2:
+            manual_subdomain = st.text_input(
+                "Sous-domaine",
+                value="",
+                placeholder="Exemple : Indépendance et missions",
+                key="manual_subdomain",
+            )
+        with tax3:
+            manual_difficulty = st.selectbox(
+                "Difficulté",
+                ["Debutant", "Intermediaire", "Avance"],
+                index=1,
+                key="manual_difficulty",
+            )
+
+        tax4, tax5 = st.columns(2)
+        with tax4:
+            manual_cognitive = st.selectbox(
+                "Niveau cognitif",
+                ["Memorisation", "Comprehension", "Application", "Analyse", "Evaluation"],
+                index=2,
+                key="manual_cognitive",
+            )
+        with tax5:
+            manual_learning_objective = st.text_input(
+                "Objectif pédagogique",
+                value="",
+                placeholder="Ce que l'apprenant doit démontrer",
+                key="manual_learning_objective",
+            )
+
+        manual_competency = st.text_input(
+            "Compétence évaluée",
+            value="",
+            key="manual_competency",
+        )
+        manual_concept = st.text_input(
+            "Notion évaluée",
+            value="",
+            key="manual_concept",
+        )
+
+        st.markdown("#### Contexte / cas pratique")
+        manual_has_context = st.checkbox(
+            "Ajouter un exposé ou cas pratique repliable",
+            value=False,
+            key="manual_has_context",
+        )
+        manual_context_title = ""
+        manual_context_text = ""
+        manual_context_collapsible = True
+        manual_context_expanded = False
+        if manual_has_context:
+            manual_context_title = st.text_input(
+                "Titre du cas",
+                value="Cas pratique / contexte",
+                key="manual_context_title",
+            )
+            manual_context_text = st.text_area(
+                "Exposé du cas",
+                height=220,
+                placeholder=(
+                    "Décris ici la situation, les faits utiles, les contraintes et les éléments "
+                    "que l'apprenant devra analyser."
+                ),
+                key="manual_context_text",
+            )
+            cx1, cx2 = st.columns(2)
+            with cx1:
+                manual_context_collapsible = st.checkbox(
+                    "Permettre ouvrir / fermer le cas",
+                    value=True,
+                    key="manual_context_collapsible",
+                )
+            with cx2:
+                manual_context_expanded = st.checkbox(
+                    "Cas ouvert par défaut",
+                    value=False,
+                    key="manual_context_expanded",
+                )
+
+        st.markdown("#### Illustration / média")
+        manual_media_mode = st.radio(
+            "Ajouter une illustration",
+            ["Aucune", "URL", "Téléverser une image"],
+            horizontal=True,
+            key="manual_media_mode",
+        )
+        manual_media_url = ""
+        manual_media_upload = None
+        manual_media_caption = ""
+        manual_media_alt = ""
+        if manual_media_mode == "URL":
+            manual_media_url = st.text_input(
+                "URL de l'image ou du média",
+                value="",
+                key="manual_media_url",
+            )
+        elif manual_media_mode == "Téléverser une image":
+            manual_media_upload = st.file_uploader(
+                "Image (PNG, JPG, JPEG, WEBP — 2 Mo max)",
+                type=["png", "jpg", "jpeg", "webp"],
+                key="manual_media_upload",
+            )
+        if manual_media_mode != "Aucune":
+            med1, med2 = st.columns(2)
+            with med1:
+                manual_media_caption = st.text_input(
+                    "Légende",
+                    value="",
+                    key="manual_media_caption",
+                )
+            with med2:
+                manual_media_alt = st.text_input(
+                    "Texte alternatif",
+                    value="",
+                    key="manual_media_alt",
+                )
+
+        st.markdown("#### Question")
+        manual_question_text = st.text_area(
+            "Énoncé / consigne",
+            height=130,
+            placeholder="Rédige la question ou la consigne...",
+            key="manual_question_text",
+        )
+
+        type_payload: Dict[str, Any] = {}
+
+        if manual_type == "single_choice":
+            option_lines = st.text_area(
+                "Options — une par ligne",
+                height=150,
+                placeholder="Option A\nOption B\nOption C\nOption D",
+                key="manual_single_options",
+            )
+            correct_letter = st.text_input(
+                "Bonne réponse — lettre",
+                value="A",
+                key="manual_single_correct",
+            ).strip().upper()
+            type_payload["options"] = _manual_lines(option_lines)
+            type_payload["correct_answer"] = correct_letter
+
+        elif manual_type == "true_false":
+            type_payload["options"] = ["Vrai", "Faux"]
+            type_payload["correct_answer"] = st.selectbox(
+                "Bonne réponse",
+                ["Vrai", "Faux"],
+                key="manual_true_false_correct",
+            )
+
+        elif manual_type == "short_answer":
+            accepted = st.text_area(
+                "Réponses acceptées — facultatif, une par ligne",
+                height=110,
+                help="Laisse vide si la réponse doit être relue manuellement.",
+                key="manual_short_accepted",
+            )
+            max_words = st.number_input(
+                "Nombre maximal de mots — 0 = pas de limite",
+                min_value=0,
+                max_value=500,
+                value=0,
+                step=1,
+                key="manual_short_max_words",
+            )
+            type_payload["accepted_answers"] = _manual_lines(accepted)
+            if max_words:
+                type_payload["max_words"] = int(max_words)
+
+        elif manual_type == "long_answer":
+            criteria = st.text_area(
+                "Critères d'évaluation — un par ligne",
+                height=150,
+                placeholder=(
+                    "Identifier les éléments clés\n"
+                    "Justifier le raisonnement\n"
+                    "Proposer une réponse opérationnelle"
+                ),
+                key="manual_long_criteria",
+            )
+            la1, la2 = st.columns(2)
+            with la1:
+                max_points = st.number_input(
+                    "Barème maximal — 0 = non défini",
+                    min_value=0.0,
+                    max_value=100.0,
+                    value=10.0,
+                    step=1.0,
+                    key="manual_long_max_points",
+                )
+            with la2:
+                max_words = st.number_input(
+                    "Nombre maximal de mots — 0 = pas de limite",
+                    min_value=0,
+                    max_value=5000,
+                    value=0,
+                    step=10,
+                    key="manual_long_max_words",
+                )
+            type_payload["evaluation_criteria"] = _manual_lines(criteria)
+            if max_points:
+                type_payload["max_points"] = float(max_points)
+            if max_words:
+                type_payload["max_words"] = int(max_words)
+
+        elif manual_type in {"priority_ranking", "point_allocation", "ordering", "self_assessment"}:
+            item_lines = st.text_area(
+                "Éléments — un par ligne",
+                height=160,
+                placeholder="Élément 1\nÉlément 2\nÉlément 3\nÉlément 4",
+                key=f"manual_items_{manual_type}",
+            )
+            items = _manual_lettered_items(_manual_lines(item_lines))
+            type_payload["items"] = items
+
+            if manual_type == "priority_ranking":
+                mode = st.selectbox(
+                    "Mode de priorisation",
+                    ["rank_all", "top_n"],
+                    format_func=lambda value: (
+                        "Classer tous les éléments"
+                        if value == "rank_all"
+                        else "Sélectionner et classer un Top N"
+                    ),
+                    key="manual_ranking_mode",
+                )
+                type_payload["ranking_mode"] = mode
+                if mode == "top_n":
+                    type_payload["top_n"] = int(
+                        st.number_input(
+                            "Nombre de priorités à retenir",
+                            min_value=1,
+                            max_value=20,
+                            value=3,
+                            step=1,
+                            key="manual_ranking_top_n",
+                        )
+                    )
+                type_payload["require_justification"] = st.checkbox(
+                    "Demander une justification",
+                    value=True,
+                    key="manual_ranking_justification",
+                )
+
+            elif manual_type == "point_allocation":
+                type_payload["total_points"] = int(
+                    st.number_input(
+                        "Total de points à répartir",
+                        min_value=1,
+                        max_value=1000,
+                        value=100,
+                        step=1,
+                        key="manual_allocation_total",
+                    )
+                )
+                type_payload["require_justification"] = st.checkbox(
+                    "Demander une justification",
+                    value=True,
+                    key="manual_allocation_justification",
+                )
+
+            elif manual_type == "ordering":
+                type_payload["correct_order"] = list(
+                    "".join(
+                        ch
+                        for ch in st.text_input(
+                            "Ordre attendu — exemple : CABDE",
+                            value="",
+                            key="manual_ordering_correct",
+                        ).upper()
+                        if ch.isalpha()
+                    )
+                )
+
+            elif manual_type == "self_assessment":
+                sc1, sc2 = st.columns(2)
+                with sc1:
+                    type_payload["scale_min"] = int(
+                        st.number_input(
+                            "Minimum de l'échelle",
+                            min_value=0,
+                            max_value=9,
+                            value=1,
+                            key="manual_self_min",
+                        )
+                    )
+                with sc2:
+                    type_payload["scale_max"] = int(
+                        st.number_input(
+                            "Maximum de l'échelle",
+                            min_value=1,
+                            max_value=10,
+                            value=5,
+                            key="manual_self_max",
+                        )
+                    )
+
+        elif manual_type == "matching":
+            pair_lines = st.text_area(
+                "Associations — une ligne par paire, format gauche => droite",
+                height=180,
+                placeholder="Responsable => Définit les finalités\nSous-traitant => Agit sur instruction",
+                key="manual_matching_pairs",
+            )
+            type_payload["pairs"] = _manual_pairs(pair_lines)
+            type_payload["correct_answer"] = "Voir les paires de correction."
+
+        elif manual_type == "fill_blank":
+            st.caption(
+                "Utilise [...] dans l'énoncé pour chaque trou, puis renseigne les réponses dans le même ordre."
+            )
+            blank_answers = st.text_area(
+                "Réponses attendues — une par trou",
+                height=120,
+                key="manual_fill_answers",
+            )
+            type_payload["correct_answers"] = _manual_lines(blank_answers)
+
+        st.markdown("#### Correction et traçabilité")
+        corr1, corr2 = st.columns(2)
+        with corr1:
+            manual_explanation = st.text_area(
+                "Explication / correction",
+                height=120,
+                key="manual_explanation",
+            )
+            manual_remediation = st.text_area(
+                "Piste de révision / remédiation",
+                height=100,
+                key="manual_remediation",
+            )
+        with corr2:
+            manual_source_excerpt = st.text_area(
+                "Source / référence / extrait",
+                height=120,
+                key="manual_source_excerpt",
+            )
+            manual_quality_notes = st.text_area(
+                "Notes qualité / commentaires formateur",
+                height=100,
+                key="manual_quality_notes",
+            )
+
+        if st.button(
+            "Prévisualiser / préparer cette question",
+            type="primary",
+            width="stretch",
+            key="manual_prepare_question",
+        ):
+            try:
+                if not manual_question_text.strip():
+                    raise ValueError("L'énoncé de la question est obligatoire.")
+
+                if manual_type == "single_choice":
+                    if len(type_payload.get("options") or []) < 2:
+                        raise ValueError("Ajoute au moins deux options.")
+                    if not type_payload.get("correct_answer"):
+                        raise ValueError("Renseigne la bonne réponse.")
+
+                if manual_type == "matching" and not type_payload.get("pairs"):
+                    raise ValueError("Ajoute au moins une association valide.")
+
+                if manual_type in {
+                    "priority_ranking",
+                    "point_allocation",
+                    "ordering",
+                    "self_assessment",
+                } and not type_payload.get("items"):
+                    raise ValueError("Ajoute au moins un élément structuré.")
+
+                if manual_type == "ordering" and not type_payload.get("correct_order"):
+                    raise ValueError("Renseigne l'ordre attendu.")
+
+                if manual_type == "fill_blank":
+                    blanks = len(
+                        re.findall(
+                            r"\[\s*(?:\.\.\.|…+)\s*\]",
+                            manual_question_text,
+                        )
+                    )
+                    answers = type_payload.get("correct_answers") or []
+                    if blanks == 0:
+                        raise ValueError("Ajoute au moins un marqueur [...] dans l'énoncé.")
+                    if len(answers) != blanks:
+                        raise ValueError(
+                            f"{blanks} trou(s) détecté(s) mais {len(answers)} réponse(s) renseignée(s)."
+                        )
+
+                if manual_type == "long_answer" and not type_payload.get("evaluation_criteria"):
+                    raise ValueError(
+                        "Ajoute au moins un critère d'évaluation pour une réponse longue."
+                    )
+
+                media_payload = None
+                if manual_media_mode == "URL" and manual_media_url.strip():
+                    media_payload = {
+                        "type": "image",
+                        "url": manual_media_url.strip(),
+                        "caption": manual_media_caption.strip(),
+                        "alt_text": manual_media_alt.strip(),
+                    }
+                elif manual_media_mode == "Téléverser une image":
+                    data_url = _manual_image_data_url(manual_media_upload)
+                    if data_url:
+                        media_payload = {
+                            "type": "image",
+                            "url": data_url,
+                            "caption": manual_media_caption.strip(),
+                            "alt_text": manual_media_alt.strip(),
+                        }
+
+                question_payload: Dict[str, Any] = {
+                    "type": manual_type,
+                    "schema_version": 2,
+                    "schema_type_locked": True,
+                    "schema_type_source": "manual_creation",
+                    "training_scope": manual_training_scope,
+                    "question_set_type": manual_set_type,
+                    "domain": manual_domain.strip() or "Non classé",
+                    "subdomain": manual_subdomain.strip(),
+                    "difficulty": manual_difficulty,
+                    "cognitive_level": manual_cognitive,
+                    "learning_objective": manual_learning_objective.strip(),
+                    "competency": manual_competency.strip(),
+                    "concept_evaluated": manual_concept.strip(),
+                    "question": manual_question_text.strip(),
+                    "explanation": manual_explanation.strip(),
+                    "source_excerpt": manual_source_excerpt.strip(),
+                    "remediation": manual_remediation.strip(),
+                    "quality_notes": manual_quality_notes.strip(),
+                    "quality_score": 100,
+                }
+                question_payload.update(type_payload)
+
+                if manual_has_context and manual_context_text.strip():
+                    question_payload["context"] = {
+                        "title": manual_context_title.strip() or "Cas pratique / contexte",
+                        "text": manual_context_text.strip(),
+                        "collapsible": bool(manual_context_collapsible),
+                        "expanded": bool(manual_context_expanded),
+                    }
+
+                if media_payload:
+                    question_payload["media"] = media_payload
+
+                st.session_state.manual_question_preview = question_payload
+                st.success("Question préparée. Contrôle l'aperçu avant de l'ajouter.")
+            except Exception as exc:
+                st.error(f"Question non préparée : {exc}")
+
+        manual_preview = st.session_state.get("manual_question_preview")
+        if manual_preview:
+            st.markdown("---")
+            st.markdown("### Aperçu avant ajout")
+            render_creator_question(manual_preview, 1)
+
+            add1, add2 = st.columns(2)
+            with add1:
+                if st.button(
+                    "Ajouter au brouillon de quiz",
+                    width="stretch",
+                    key="manual_add_to_draft",
+                ):
+                    draft = list(
+                        st.session_state.get("manual_quiz_questions") or []
+                    )
+                    draft.append(dict(manual_preview))
+                    st.session_state.manual_quiz_questions = draft
+                    st.success(
+                        f"Question ajoutée au brouillon : {len(draft)} question(s)."
+                    )
+
+            with add2:
+                if st.button(
+                    "Ajouter directement à la banque",
+                    type="primary",
+                    width="stretch",
+                    key="manual_add_to_bank",
+                ):
+                    added = add_question_to_bank(
+                        manual_preview,
+                        source_quiz_title=manual_title.strip() or "Quiz manuel",
+                    )
+                    if added:
+                        st.success("Question ajoutée à la banque.")
+                    else:
+                        st.warning(
+                            "Question non ajoutée : doublon probable ou question invalide."
+                        )
+
+        draft_questions = list(
+            st.session_state.get("manual_quiz_questions") or []
+        )
+        st.markdown("---")
+        st.markdown(
+            f"### Brouillon manuel — {len(draft_questions)} question(s)"
+        )
+        if draft_questions:
+            for idx, q in enumerate(draft_questions, start=1):
+                st.caption(
+                    f"Q{idx} — {_manual_type_label(q.get('type', ''))} — "
+                    f"{(q.get('question') or '')[:120]}"
+                )
+
+            dq1, dq2 = st.columns(2)
+            with dq1:
+                if st.button(
+                    "Charger ce brouillon dans Quiz créateur",
+                    type="primary",
+                    width="stretch",
+                    key="manual_load_draft_quiz",
+                ):
+                    st.session_state.quiz = {
+                        "quiz_title": manual_title.strip() or "Quiz manuel",
+                        "analysis_summary": {
+                            "source": "Création manuelle",
+                            "question_count": len(draft_questions),
+                        },
+                        "questions": draft_questions,
+                        "quality_summary": {
+                            "average_score": 100,
+                            "low_quality_count": 0,
+                            "warning": (
+                                "Questions créées et validées manuellement par le formateur."
+                            ),
+                        },
+                        "note": "Quiz construit manuellement.",
+                    }
+                    st.session_state.last_saved_id = None
+                    st.success(
+                        "Brouillon chargé. Ouvre l'onglet Quiz créateur pour l'enregistrer ou l'exporter."
+                    )
+
+            with dq2:
+                if st.button(
+                    "Vider le brouillon manuel",
+                    width="stretch",
+                    key="manual_clear_draft",
+                ):
+                    st.session_state.manual_quiz_questions = []
+                    st.session_state.manual_question_preview = None
+                    st.rerun()
+        else:
+            st.info(
+                "Le brouillon est vide. Prépare une question puis ajoute-la au brouillon."
+            )
 
     with tab_analysis:
         st.subheader("Analyse pédagogique du support")

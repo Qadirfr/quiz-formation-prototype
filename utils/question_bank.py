@@ -1837,7 +1837,27 @@ def apply_cdpo_completion_patch(
             f"Question {qid} n'est plus classée orange au moment de la validation."
         )
 
-    target_type = str(audit_row.get("detected_type") or "")
+    completion_patch = dict(completion_patch or {})
+    requested_type = str(
+        completion_patch.pop("_target_type_override", "") or ""
+    ).strip()
+    detected_type = str(audit_row.get("detected_type") or "")
+    allowed_types = {
+        "single_choice",
+        "true_false",
+        "matching",
+        "ordering",
+        "fill_blank",
+        "self_assessment",
+        "point_allocation",
+        "priority_ranking",
+        "short_answer",
+        "long_answer",
+    }
+    if requested_type and requested_type not in allowed_types:
+        raise ValueError(f"Type de question non autorisé : {requested_type}")
+
+    target_type = requested_type or detected_type
     cleaned_patch = _normalize_completion_patch(target_type, completion_patch)
 
     previous_question = dict(row.get("question_json") or {})
@@ -1846,6 +1866,19 @@ def apply_cdpo_completion_patch(
     new_question.update(cleaned_patch)
     new_question["type"] = target_type
     new_question["schema_version"] = 2
+    new_question["schema_type_locked"] = True
+    new_question["schema_type_source"] = "trainer_review"
+
+    # Nettoie les champs incompatibles lorsqu'un formateur remplace le type proposé.
+    if target_type != "point_allocation":
+        new_question.pop("total_points", None)
+    if target_type != "priority_ranking":
+        new_question.pop("ranking_mode", None)
+        new_question.pop("top_n", None)
+    if target_type not in {"point_allocation", "priority_ranking"}:
+        new_question.pop("require_justification", None)
+    if target_type in {"short_answer", "long_answer"}:
+        new_question.pop("items", None)
 
     # Validations de cohérence propres aux types structurés.
     if target_type == "priority_ranking":
@@ -2043,6 +2076,8 @@ def apply_cdpo_completion_patch(
         "target_type": target_type,
         "issues_before": list(audit_row.get("issues") or []),
         "issues_after": list(validation.get("issues") or []),
+        "detected_type_before": detected_type,
+        "trainer_override": bool(requested_type and requested_type != detected_type),
     }
 
 

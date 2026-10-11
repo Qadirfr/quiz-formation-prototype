@@ -3177,6 +3177,72 @@ def trainer_app() -> None:
                 "Le fichier est contrôlé avant ajout."
             )
 
+            with st.expander("Comment remplir un cas pratique dans le CSV ?", expanded=True):
+                st.markdown(
+                    """
+**Principe : une ligne = une question.**  
+Pour plusieurs questions basées sur le même exposé, utilise le même **`case_id`**.
+
+- `case_id` : identifiant commun du cas, par exemple `CAS-RGPD-001`.
+- `context_title` : titre du cas.
+- `context_text` : exposé complet. Tu peux le renseigner uniquement sur la première ligne du cas.
+- `context_collapsible` : `true` pour afficher le cas dans un volet ouvrir/fermer.
+- `option_a` à `option_f` : propositions du QCM.
+- `correct_answer` : lettre de la bonne réponse (`A`, `B`, `C`...).
+- `feedback_a` à `feedback_f` : explication spécifique à chaque proposition.
+- `explanation` : correction générale affichée après la réponse.
+- `remediation` : piste de révision.
+- `source_excerpt` : référence au support, à la norme ou au texte source.
+
+**Exemple :** la première ligne porte `case_id = CAS-RGPD-001` + tout l'exposé.  
+Les lignes suivantes utilisent seulement `case_id = CAS-RGPD-001` : l'application reprend automatiquement le même exposé.
+
+Pour une image, renseigne `media_url`, puis éventuellement `media_caption` et `media_alt_text`.
+                    """
+                )
+
+                st.dataframe(
+                    [
+                        {
+                            "Colonne": "case_id",
+                            "Exemple": "CAS-RGPD-001",
+                            "Rôle": "Relie plusieurs questions au même cas",
+                        },
+                        {
+                            "Colonne": "context_text",
+                            "Exemple": "Une clinique découvre...",
+                            "Rôle": "Exposé / scénario",
+                        },
+                        {
+                            "Colonne": "question",
+                            "Exemple": "Quelle action faut-il réaliser en premier ?",
+                            "Rôle": "Question posée",
+                        },
+                        {
+                            "Colonne": "option_a ... option_d",
+                            "Exemple": "Notifier la CNIL / Ignorer / ...",
+                            "Rôle": "Propositions",
+                        },
+                        {
+                            "Colonne": "correct_answer",
+                            "Exemple": "A",
+                            "Rôle": "Bonne réponse",
+                        },
+                        {
+                            "Colonne": "feedback_a ... feedback_d",
+                            "Exemple": "Correct car... / Incorrect car...",
+                            "Rôle": "Explication par proposition",
+                        },
+                        {
+                            "Colonne": "explanation",
+                            "Exemple": "La réponse A est attendue car...",
+                            "Rôle": "Correction générale",
+                        },
+                    ],
+                    width="stretch",
+                    hide_index=True,
+                )
+
             tpl1, tpl2 = st.columns(2)
             with tpl1:
                 st.download_button(

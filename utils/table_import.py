@@ -395,6 +395,75 @@ def rows_to_quiz(rows: List[Dict[str, Any]], filename: str = "quiz") -> Dict[str
 
     questions = []
 
+    # Un même cas pratique peut alimenter plusieurs questions. Le fichier
+    # industriel renseigne l'exposé une seule fois avec case_id, puis les
+    # lignes suivantes réutilisent ce case_id sans répéter tout le texte.
+    case_registry: Dict[str, Dict[str, Any]] = {}
+    for row in rows:
+        case_id = get_value(row, "case_id", "scenario_id", "cas_id")
+        if not case_id:
+            continue
+
+        context_text = get_value(
+            row,
+            "context_text",
+            "case_context",
+            "case_text",
+            "cas_pratique",
+            "contexte",
+        )
+        media_url = get_value(
+            row,
+            "media_url",
+            "image_url",
+            "illustration_url",
+        )
+
+        entry = case_registry.setdefault(case_id, {})
+        if context_text:
+            entry["context"] = {
+                "title": get_value(
+                    row,
+                    "context_title",
+                    "case_title",
+                    "titre_cas",
+                ) or "Cas pratique / contexte",
+                "text": context_text,
+                "collapsible": parse_bool(
+                    get_value(
+                        row,
+                        "context_collapsible",
+                        "case_collapsible",
+                    ),
+                    True,
+                ),
+                "expanded": parse_bool(
+                    get_value(
+                        row,
+                        "context_expanded",
+                        "case_expanded",
+                    ),
+                    False,
+                ),
+            }
+        if media_url:
+            entry["media"] = {
+                "type": get_value(row, "media_type", "type_media") or "image",
+                "url": media_url,
+                "caption": get_value(
+                    row,
+                    "media_caption",
+                    "image_caption",
+                    "legende_media",
+                ),
+                "alt_text": get_value(
+                    row,
+                    "media_alt_text",
+                    "image_alt_text",
+                    "texte_alternatif",
+                ),
+            }
+
     for row in rows:
         question_text = get_value(row, "question", "consigne", "enonce")
         if not question_text:
@@ -466,6 +535,10 @@ def rows_to_quiz(rows: List[Dict[str, Any]], filename: str = "quiz") -> Dict[str
             ),
         }
 
+        case_id = get_value(row, "case_id", "scenario_id", "cas_id")
+        if case_id:
+            question["case_id"] = case_id
+
         items = parse_items(row)
         if items:
             question["items"] = items
@@ -504,6 +577,8 @@ def rows_to_quiz(rows: List[Dict[str, Any]], filename: str = "quiz") -> Dict[str
                     False,
                 ),
             }
+        elif case_id and case_registry.get(case_id, {}).get("context"):
+            question["context"] = dict(case_registry[case_id]["context"])
 
         media_url = get_value(
             row,
@@ -528,6 +603,8 @@ def rows_to_quiz(rows: List[Dict[str, Any]], filename: str = "quiz") -> Dict[str
                     "texte_alternatif",
                 ),
             }
+        elif case_id and case_registry.get(case_id, {}).get("media"):
+            question["media"] = dict(case_registry[case_id]["media"])
 
         total_points = get_value(row, "total_points", "points_total")
         if total_points:
@@ -865,6 +942,7 @@ def template_csv_bytes() -> bytes:
         "module",
         "training_scope",
         "question_set_type",
+        "case_id",
         "domain",
         "subdomain",
         "type",
@@ -919,25 +997,30 @@ def template_csv_bytes() -> bytes:
             "module": "RGPD",
             "training_scope": "CDPO",
             "question_set_type": "Entrainement par domaine",
-            "domain": "Principes RGPD",
-            "subdomain": "Minimisation",
+            "case_id": "CAS-RGPD-001",
+            "domain": "Violations de donnees",
+            "subdomain": "Qualification et reaction initiale",
             "type": "single_choice",
             "difficulty": "Intermediaire",
             "cognitive_level": "Application",
-            "learning_objective": "Choisir une mesure conforme au principe de minimisation.",
-            "competency": "Appliquer les principes de protection des donnees.",
-            "concept_evaluated": "Minimisation des donnees",
-            "question": "Quelle mesure faut-il appliquer en priorite ?",
-            "option_a": "Collecter toutes les donnees disponibles",
-            "option_b": "Limiter la collecte aux donnees necessaires",
-            "option_c": "Conserver les donnees sans limite",
-            "option_d": "Partager les donnees avec tous les services",
+            "learning_objective": "Identifier la premiere action adaptee lors d'une violation potentielle.",
+            "competency": "Qualifier et gerer une violation de donnees.",
+            "concept_evaluated": "Reaction initiale a une violation",
+            "question": "Quelle action doit etre engagee en premier ?",
+            "option_a": "Supprimer immediatement tous les journaux techniques",
+            "option_b": "Contenir l'incident et reunir les premiers elements de qualification",
+            "option_c": "Attendre 72 heures avant toute analyse",
+            "option_d": "Informer automatiquement toutes les personnes concernees",
             "correct_answer": "B",
-            "explanation": "Le principe de minimisation limite la collecte aux donnees necessaires.",
-            "remediation": "Revoir les principes de l'article 5 du RGPD.",
-            "source_excerpt": "RGPD, article 5(1)(c)",
-            "context_title": "Cas pratique",
-            "context_text": "Une entreprise souhaite enrichir un formulaire d'inscription avec plusieurs informations facultatives.",
+            "feedback_a": "Incorrect : les journaux peuvent etre utiles pour comprendre l'incident et conserver des preuves.",
+            "feedback_b": "Correct : il faut d'abord limiter le dommage et qualifier les faits avant de decider des notifications.",
+            "feedback_c": "Incorrect : le delai de 72 heures n'autorise pas a attendre avant d'analyser l'incident.",
+            "feedback_d": "Incorrect : la communication aux personnes depend notamment du niveau de risque.",
+            "explanation": "La premiere phase consiste a contenir l'incident, preserver les elements utiles et qualifier la violation afin d'evaluer le risque et les obligations de notification.",
+            "remediation": "Revoir la gestion d'une violation de donnees : qualification, risque, notification et communication.",
+            "source_excerpt": "RGPD articles 33 et 34 ; support de formation sur la gestion des violations.",
+            "context_title": "Cas pratique — Clinique Horizon",
+            "context_text": "Une clinique constate qu'un fichier contenant des donnees de sante de 850 patients a ete accessible pendant plusieurs heures via un lien mal configure. L'equipe informatique a desactive le lien mais ne sait pas encore si le fichier a ete telecharge. Le DPO est informe deux heures apres la decouverte.",
             "context_collapsible": "true",
             "context_expanded": "false",
             "media_type": "image",
@@ -950,6 +1033,7 @@ def template_csv_bytes() -> bytes:
             "module": "RGPD",
             "training_scope": "CDPO",
             "question_set_type": "Examen blanc",
+            "case_id": "CAS-RGPD-001",
             "domain": "Violations de donnees",
             "subdomain": "Gestion d'incident",
             "type": "priority_ranking",
@@ -971,12 +1055,13 @@ def template_csv_bytes() -> bytes:
             "module": "RGPD",
             "training_scope": "CDPO",
             "question_set_type": "Examen blanc",
-            "domain": "Fonction DPO",
-            "subdomain": "Conseil et controle",
+            "case_id": "CAS-RGPD-001",
+            "domain": "Violations de donnees",
+            "subdomain": "Notification et communication",
             "type": "long_answer",
             "difficulty": "Avance",
             "cognitive_level": "Evaluation",
-            "question": "Redigez votre analyse et vos recommandations.",
+            "question": "A partir du meme cas, analysez si une notification a l'autorite et une communication aux personnes sont necessaires. Justifiez votre raisonnement.",
             "max_words": "350",
             "max_points": "10",
             "evaluation_criteria": (

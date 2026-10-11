@@ -3814,7 +3814,48 @@ def trainer_app() -> None:
                         ):
                             completion_patch = {}
 
-                            if orange_type == "point_allocation":
+                            type_labels = {
+                                "point_allocation": "Répartition de points",
+                                "priority_ranking": "Priorisation / classement",
+                                "short_answer": "Réponse libre courte",
+                                "long_answer": "Réponse rédigée longue",
+                                "ordering": "Ordonnancement",
+                                "fill_blank": "Question à trous",
+                                "self_assessment": "Auto-positionnement",
+                                "matching": "Appariement",
+                                "single_choice": "QCM — choix unique",
+                                "true_false": "Vrai / Faux",
+                            }
+                            type_values = [
+                                "priority_ranking",
+                                "point_allocation",
+                                "short_answer",
+                                "long_answer",
+                                "ordering",
+                                "fill_blank",
+                                "self_assessment",
+                                "matching",
+                                "single_choice",
+                                "true_false",
+                            ]
+                            proposed_type = orange_type if orange_type in type_values else "long_answer"
+                            proposed_index = type_values.index(proposed_type)
+                            selected_orange_type = st.selectbox(
+                                "Type retenu par le formateur",
+                                options=type_values,
+                                index=proposed_index,
+                                format_func=lambda value: (
+                                    f"{type_labels.get(value, value)}"
+                                    + (" — proposé" if value == proposed_type else "")
+                                ),
+                                help=(
+                                    "L'auditeur propose un type, mais le formateur peut le corriger. "
+                                    "Le type validé sera ensuite verrouillé dans le schéma."
+                                ),
+                            )
+                            completion_patch["_target_type_override"] = selected_orange_type
+
+                            if selected_orange_type == "point_allocation":
                                 total_default = orange_question.get("total_points")
                                 total_points_text = st.text_input(
                                     "Total de points à répartir",
@@ -3839,7 +3880,7 @@ def trainer_app() -> None:
                                     "require_justification": require_justification,
                                 }
 
-                            elif orange_type == "priority_ranking":
+                            elif selected_orange_type == "priority_ranking":
                                 existing_mode = str(
                                     orange_question.get("ranking_mode") or ""
                                 )
@@ -3884,7 +3925,7 @@ def trainer_app() -> None:
                                     "require_justification": require_justification,
                                 }
 
-                            elif orange_type == "long_answer":
+                            elif selected_orange_type == "long_answer":
                                 existing_criteria = (
                                     orange_question.get("evaluation_criteria")
                                     or orange_question.get("rubric")
@@ -3918,7 +3959,7 @@ def trainer_app() -> None:
                                     "max_points": max_points_text,
                                 }
 
-                            elif orange_type == "fill_blank":
+                            elif selected_orange_type == "fill_blank":
                                 existing_answers = (
                                     orange_question.get("correct_answers") or []
                                 )
@@ -3937,7 +3978,7 @@ def trainer_app() -> None:
                                     "correct_answers": answers_text,
                                 }
 
-                            elif orange_type == "ordering":
+                            elif selected_orange_type == "ordering":
                                 existing_order = (
                                     orange_question.get("correct_order")
                                     or orange_question.get("expected_order")
@@ -3958,7 +3999,7 @@ def trainer_app() -> None:
                                     "correct_order": order_text,
                                 }
 
-                            elif orange_type == "matching":
+                            elif selected_orange_type == "matching":
                                 existing_pairs = orange_question.get("pairs") or []
                                 pair_lines = []
                                 for pair in existing_pairs:
@@ -3976,7 +4017,7 @@ def trainer_app() -> None:
                                     "_pairs_text": pairs_text,
                                 }
 
-                            elif orange_type in {"single_choice", "true_false"}:
+                            elif selected_orange_type in {"single_choice", "true_false"}:
                                 existing_options = orange_question.get("options") or []
                                 options_text = st.text_area(
                                     "Options — une par ligne",
@@ -3996,6 +4037,43 @@ def trainer_app() -> None:
                                     "correct_answer": correct_answer_text,
                                 }
 
+                            elif selected_orange_type == "short_answer":
+                                accepted_default = orange_question.get("accepted_answers") or []
+                                if isinstance(accepted_default, list):
+                                    accepted_default_text = "\n".join(
+                                        str(item) for item in accepted_default
+                                    )
+                                else:
+                                    accepted_default_text = str(accepted_default or "")
+                                accepted_text = st.text_area(
+                                    "Réponses acceptées (facultatif) — une par ligne",
+                                    value=accepted_default_text,
+                                    height=120,
+                                    help=(
+                                        "Laisse vide si la réponse doit être relue manuellement. "
+                                        "Tu pourras ajouter les réponses acceptées plus tard."
+                                    ),
+                                )
+                                max_words_text = st.text_input(
+                                    "Nombre maximal de mots (facultatif)",
+                                    value=str(orange_question.get("max_words") or ""),
+                                    placeholder="Exemple : 3",
+                                )
+                                completion_patch.update({
+                                    "accepted_answers": accepted_text,
+                                    "max_words": max_words_text,
+                                })
+
+                            elif selected_orange_type == "self_assessment":
+                                st.caption(
+                                    "Échelle proposée : 1 à 5. "
+                                    "Les dimensions déjà détectées seront conservées."
+                                )
+                                completion_patch.update({
+                                    "scale_min": 1,
+                                    "scale_max": 5,
+                                })
+
                             else:
                                 st.warning(
                                     "Ce type orange n'a pas encore d'éditeur dédié. "
@@ -4005,12 +4083,14 @@ def trainer_app() -> None:
                             submitted_orange = st.form_submit_button(
                                 "Valider et sauvegarder cette correction",
                                 type="primary",
-                                disabled=orange_type not in {
+                                disabled=selected_orange_type not in {
                                     "point_allocation",
                                     "priority_ranking",
+                                    "short_answer",
                                     "long_answer",
                                     "fill_blank",
                                     "ordering",
+                                    "self_assessment",
                                     "matching",
                                     "single_choice",
                                     "true_false",
@@ -4045,7 +4125,12 @@ def trainer_app() -> None:
                                 )
                                 st.session_state.orange_cdpo_completion_notice = (
                                     f"Question #{result.get('question_id')} complétée "
-                                    f"et journalisée ({result.get('target_type')})."
+                                    f"et journalisée ({result.get('target_type')})"
+                                    + (
+                                        " — type corrigé par le formateur."
+                                        if result.get("trainer_override")
+                                        else "."
+                                    )
                                 )
                                 st.rerun()
                             except Exception as exc:

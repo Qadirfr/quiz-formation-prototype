@@ -1789,6 +1789,33 @@ def _normalize_completion_patch(
             raise ValueError("Les paires d'appariement sont incomplètes.")
         cleaned["pairs"] = normalized_pairs
 
+    elif target_type == "short_answer":
+        accepted = cleaned.get("accepted_answers") or []
+        if isinstance(accepted, str):
+            accepted = [
+                part.strip()
+                for part in __import__("re").split(r"[|;\n]", accepted)
+                if part.strip()
+            ]
+        cleaned["accepted_answers"] = list(accepted) if isinstance(accepted, list) else []
+        max_words = cleaned.get("max_words")
+        if max_words not in (None, ""):
+            try:
+                max_words = int(max_words)
+            except Exception:
+                raise ValueError("Le nombre maximal de mots doit être un entier.")
+            if max_words <= 0:
+                raise ValueError("Le nombre maximal de mots doit être positif.")
+            cleaned["max_words"] = max_words
+        else:
+            cleaned.pop("max_words", None)
+
+    elif target_type == "self_assessment":
+        cleaned["scale_min"] = int(cleaned.get("scale_min") or 1)
+        cleaned["scale_max"] = int(cleaned.get("scale_max") or 5)
+        if cleaned["scale_min"] >= cleaned["scale_max"]:
+            raise ValueError("L'échelle d'auto-positionnement est invalide.")
+
     elif target_type in {"single_choice", "true_false"}:
         options = cleaned.get("options")
         if isinstance(options, str):

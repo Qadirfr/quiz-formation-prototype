@@ -71,6 +71,7 @@ from utils.question_bank import (
     list_question_bank_records_for_audit,
     build_safe_cdpo_migration_preview,
     apply_safe_cdpo_question_migration,
+    build_cdpo_safe_review_preview,
     build_cdpo_completion_preview,
     build_cdpo_manual_review_preview,
     apply_cdpo_completion_patch,
@@ -3832,6 +3833,335 @@ def trainer_app() -> None:
                                 f"Sauvegarde de migration : {run_id} — "
                                 f"{len(log_rows)} entrée(s) journalisée(s)."
                             )
+
+                    st.markdown("---")
+                    st.markdown("### Revue facultative — questions vertes")
+                    st.caption(
+                        "Les questions vertes sont des corrections jugées sûres par l'auditeur. "
+                        "Tu peux néanmoins contrôler et corriger manuellement le type avant validation."
+                    )
+
+                    green_saved_count = sum(
+                        1
+                        for row in rows
+                        if row.get("source_kind") == "Quiz sauvegardé"
+                        and audit_action(row) == "safe_candidate"
+                        and row.get("needs_review")
+                    )
+
+                    if st.button(
+                        "Charger / actualiser les questions vertes de la banque CDPO",
+                        key="load_green_cdpo_questions",
+                        width="stretch",
+                    ):
+                        st.session_state.green_cdpo_review_preview = (
+                            build_cdpo_safe_review_preview(limit=5000)
+                        )
+
+                    green_notice = st.session_state.pop(
+                        "green_cdpo_review_notice",
+                        None,
+                    )
+                    if green_notice:
+                        st.success(green_notice)
+
+                    green_preview = st.session_state.get("green_cdpo_review_preview")
+                    if green_preview is None:
+                        green_preview = build_cdpo_safe_review_preview(limit=5000)
+                        st.session_state.green_cdpo_review_preview = green_preview
+
+                    green_candidates = green_preview.get("candidates") or []
+                    g1, g2 = st.columns(2)
+                    g1.metric("Verts dans la banque CDPO", len(green_candidates))
+                    g2.metric("Verts dans les quiz sauvegardés", green_saved_count)
+
+                    if green_saved_count:
+                        st.info(
+                            "Les verts présents dans des quiz déjà sauvegardés restent "
+                            "inchangés pour cette étape et seront traités séparément."
+                        )
+
+                    if not green_candidates:
+                        st.success(
+                            "Aucune question verte à revoir dans la banque CDPO active."
+                        )
+                    else:
+                        green_labels = [
+                            (
+                                f"#{item.get('id')} — proposé {item.get('target_type')} — "
+                                f"{item.get('domain') or 'Non classé'} — "
+                                f"{(item.get('question_preview') or '')[:90]}"
+                            )
+                            for item in green_candidates
+                        ]
+                        green_index = st.selectbox(
+                            "Question verte à contrôler",
+                            options=list(range(len(green_candidates))),
+                            format_func=lambda i: green_labels[i],
+                            key="green_cdpo_question_select",
+                        )
+                        green_item = green_candidates[green_index]
+                        green_question = green_item.get("question") or {}
+                        green_proposed = green_item.get("target_type") or ""
+                        green_suggested = green_item.get("suggested_patch") or {}
+                        green_items = (
+                            green_question.get("items")
+                            or green_suggested.get("items")
+                            or []
+                        )
+
+                        st.markdown(
+                            f"**Question #{green_item.get('id')} — proposition : "
+                            f"{green_proposed}**"
+                        )
+                        st.write(green_item.get("question_preview") or "")
+                        st.caption(
+                            "Anomalie(s) : "
+                            + (
+                                " | ".join(green_item.get("issues") or [])
+                                if green_item.get("issues")
+                                else "aucune"
+                            )
+                        )
+
+                        if green_items:
+                            st.markdown("**Éléments structurés détectés**")
+                            for item in green_items:
+                                if isinstance(item, dict):
+                                    st.write(
+                                        f"{item.get('label', '')}. "
+                                        f"{item.get('text', '')}"
+                                    )
+                                else:
+                                    st.write(str(item))
+
+                        with st.form(f"green_review_form_{green_item.get('id')}"):
+                            green_type_labels = {
+                                "short_answer": "Réponse libre courte",
+                                "long_answer": "Réponse rédigée longue",
+                                "priority_ranking": "Priorisation / classement",
+                                "point_allocation": "Répartition de points",
+                                "ordering": "Ordonnancement",
+                                "fill_blank": "Question à trous",
+                                "self_assessment": "Auto-positionnement",
+                                "matching": "Appariement",
+                                "single_choice": "QCM — choix unique",
+                                "true_false": "Vrai / Faux",
+                            }
+                            green_type_values = list(green_type_labels.keys())
+                            green_default = (
+                                green_proposed
+                                if green_proposed in green_type_values
+                                else "short_answer"
+                            )
+                            green_selected_type = st.selectbox(
+                                "Type final retenu par le formateur",
+                                options=green_type_values,
+                                index=green_type_values.index(green_default),
+                                format_func=lambda value: (
+                                    green_type_labels[value]
+                                    + (
+                                        " — proposé"
+                                        if value == green_proposed
+                                        else ""
+                                    )
+                                ),
+                            )
+                            green_patch: Dict[str, Any] = {
+                                "_target_type_override": green_selected_type,
+                            }
+
+                            if green_selected_type == "short_answer":
+                                accepted = green_question.get("accepted_answers") or []
+                                green_patch.update({
+                                    "accepted_answers": st.text_area(
+                                        "Réponses acceptées — facultatif, une par ligne",
+                                        value=(
+                                            "\n".join(str(x) for x in accepted)
+                                            if isinstance(accepted, list)
+                                            else str(accepted or "")
+                                        ),
+                                        height=110,
+                                    ),
+                                    "max_words": st.text_input(
+                                        "Nombre maximal de mots — facultatif",
+                                        value=str(green_question.get("max_words") or ""),
+                                        placeholder="Exemple : 3",
+                                    ),
+                                })
+
+                            elif green_selected_type == "long_answer":
+                                criteria = (
+                                    green_question.get("evaluation_criteria")
+                                    or green_question.get("rubric")
+                                    or []
+                                )
+                                green_patch.update({
+                                    "evaluation_criteria": st.text_area(
+                                        "Critères d'évaluation — un par ligne",
+                                        value=(
+                                            "\n".join(str(x) for x in criteria)
+                                            if isinstance(criteria, list)
+                                            else str(criteria or "")
+                                        ),
+                                        height=150,
+                                    ),
+                                    "max_points": st.text_input(
+                                        "Barème maximal — facultatif",
+                                        value=str(green_question.get("max_points") or ""),
+                                    ),
+                                })
+
+                            elif green_selected_type == "priority_ranking":
+                                ranking_mode = st.selectbox(
+                                    "Mode de priorisation",
+                                    ["rank_all", "top_n"],
+                                    format_func=lambda value: (
+                                        "Classer tous les éléments"
+                                        if value == "rank_all"
+                                        else "Sélectionner et classer un Top N"
+                                    ),
+                                )
+                                top_n = ""
+                                if ranking_mode == "top_n":
+                                    top_n = st.text_input(
+                                        "Nombre de priorités à retenir",
+                                        value=str(green_question.get("top_n") or "3"),
+                                    )
+                                green_patch.update({
+                                    "ranking_mode": ranking_mode,
+                                    "top_n": top_n,
+                                    "require_justification": st.checkbox(
+                                        "Demander une justification",
+                                        value=bool(
+                                            green_question.get(
+                                                "require_justification",
+                                                True,
+                                            )
+                                        ),
+                                    ),
+                                })
+
+                            elif green_selected_type == "point_allocation":
+                                green_patch.update({
+                                    "total_points": st.text_input(
+                                        "Total de points à répartir",
+                                        value=str(
+                                            green_question.get("total_points") or "100"
+                                        ),
+                                    ),
+                                    "require_justification": st.checkbox(
+                                        "Demander une justification",
+                                        value=bool(
+                                            green_question.get(
+                                                "require_justification",
+                                                True,
+                                            )
+                                        ),
+                                    ),
+                                })
+
+                            elif green_selected_type == "ordering":
+                                order = (
+                                    green_question.get("correct_order")
+                                    or green_question.get("expected_order")
+                                    or ""
+                                )
+                                if isinstance(order, list):
+                                    order = "".join(str(x) for x in order)
+                                green_patch["correct_order"] = st.text_input(
+                                    "Ordre attendu",
+                                    value=str(order),
+                                    placeholder="Exemple : ABCDE",
+                                )
+
+                            elif green_selected_type == "fill_blank":
+                                answers = green_question.get("correct_answers") or []
+                                green_patch["correct_answers"] = st.text_area(
+                                    "Réponses attendues — une par trou",
+                                    value=(
+                                        "\n".join(str(x) for x in answers)
+                                        if isinstance(answers, list)
+                                        else str(answers or "")
+                                    ),
+                                    height=130,
+                                )
+
+                            elif green_selected_type == "self_assessment":
+                                st.caption("Échelle standard : 1 à 5.")
+                                green_patch.update({
+                                    "scale_min": 1,
+                                    "scale_max": 5,
+                                })
+
+                            elif green_selected_type == "matching":
+                                pair_lines = []
+                                for pair in green_question.get("pairs") or []:
+                                    if isinstance(pair, dict):
+                                        pair_lines.append(
+                                            f"{pair.get('left', '')} => "
+                                            f"{pair.get('right', '')}"
+                                        )
+                                green_patch["_pairs_text"] = st.text_area(
+                                    "Associations — format gauche => droite",
+                                    value="\n".join(pair_lines),
+                                    height=140,
+                                )
+
+                            elif green_selected_type in {"single_choice", "true_false"}:
+                                options = green_question.get("options") or []
+                                if green_selected_type == "true_false" and not options:
+                                    options = ["Vrai", "Faux"]
+                                green_patch["options"] = st.text_area(
+                                    "Options — une par ligne",
+                                    value="\n".join(str(x) for x in options),
+                                    height=120,
+                                )
+                                green_patch["correct_answer"] = st.text_input(
+                                    "Bonne réponse",
+                                    value=str(
+                                        green_question.get("correct_answer") or ""
+                                    ),
+                                )
+
+                            submitted_green = st.form_submit_button(
+                                "Valider cette question verte",
+                                type="primary",
+                                width="stretch",
+                            )
+
+                        if submitted_green:
+                            try:
+                                if "_pairs_text" in green_patch:
+                                    parsed_pairs = []
+                                    for line in str(
+                                        green_patch.pop("_pairs_text") or ""
+                                    ).splitlines():
+                                        if "=>" not in line:
+                                            continue
+                                        left, right = line.split("=>", 1)
+                                        if left.strip() and right.strip():
+                                            parsed_pairs.append({
+                                                "left": left.strip(),
+                                                "right": right.strip(),
+                                            })
+                                    green_patch["pairs"] = parsed_pairs
+
+                                green_result = apply_cdpo_completion_patch(
+                                    int(green_item["id"]),
+                                    green_patch,
+                                )
+                                st.session_state.green_cdpo_review_preview = (
+                                    build_cdpo_safe_review_preview(limit=5000)
+                                )
+                                st.session_state.green_cdpo_review_notice = (
+                                    f"Question #{green_result.get('question_id')} "
+                                    f"validée comme {green_result.get('target_type')} "
+                                    "et journalisée."
+                                )
+                                st.rerun()
+                            except Exception as exc:
+                                st.error(f"Validation non appliquée : {exc}")
 
                     st.markdown("---")
                     st.markdown("### Correction assistée — questions orange")

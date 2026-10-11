@@ -2286,6 +2286,8 @@ def render_attempt_report(attempt: Dict[str, Any], details: List[Dict[str, Any]]
             f"Q{answer['question_index']} — {label} — {answer.get('domain') or 'Non classé'} — score {round(float(answer.get('score') or 0), 2)}",
             expanded=ok is False,
         ):
+            snapshot = answer.get("question_snapshot_json") or {}
+            render_question_context_and_media(snapshot)
             st.write(answer["question_text"])
             st.caption(f"Réponse apprenant : {answer['user_answer_json']}")
             st.caption(f"Correction : {answer['correct_answer_json']}")
@@ -2386,6 +2388,123 @@ def render_analysis(analysis: Dict[str, Any]) -> None:
                     st.caption(f"Extrait source : {concept.get('source_excerpt')}")
 
 
+def _media_items(raw_media: Any) -> List[Dict[str, Any]]:
+    if not raw_media:
+        return []
+
+    if isinstance(raw_media, str):
+        return [{"type": "image", "url": raw_media}]
+
+    if isinstance(raw_media, dict):
+        return [raw_media]
+
+    if isinstance(raw_media, list):
+        items = []
+        for item in raw_media:
+            if isinstance(item, str):
+                items.append({"type": "image", "url": item})
+            elif isinstance(item, dict):
+                items.append(item)
+        return items
+
+    return []
+
+
+def render_question_media(raw_media: Any) -> None:
+    for media in _media_items(raw_media):
+        media_type = normalize_answer(
+            media.get("type")
+            or media.get("media_type")
+            or "image"
+        ).replace(" ", "_")
+        source = (
+            media.get("url")
+            or media.get("path")
+            or media.get("source")
+            or media.get("src")
+            or ""
+        )
+        caption = media.get("caption") or media.get("title") or ""
+        alt_text = media.get("alt_text") or media.get("alt") or ""
+
+        if not source:
+            continue
+
+        if media_type in {"image", "illustration", "diagram", "schema"}:
+            try:
+                st.image(
+                    source,
+                    caption=caption or alt_text or None,
+                    use_container_width=True,
+                )
+                if alt_text and alt_text != caption:
+                    st.caption(f"Description : {alt_text}")
+            except Exception:
+                st.warning("Le média associé à cette question n'a pas pu être affiché.")
+        else:
+            label = caption or "Ouvrir le document associé"
+            try:
+                st.link_button(label, source)
+            except Exception:
+                st.caption(f"{label} : {source}")
+
+
+def render_question_context_and_media(question: Dict[str, Any]) -> None:
+    if not isinstance(question, dict):
+        return
+
+    context = (
+        question.get("context")
+        or question.get("case_context")
+        or question.get("case_study")
+    )
+    top_media = question.get("media")
+    if not top_media and question.get("image_url"):
+        top_media = {
+            "type": "image",
+            "url": question.get("image_url"),
+            "caption": question.get("image_caption") or "",
+            "alt_text": question.get("image_alt_text") or "",
+        }
+
+    if context:
+        if isinstance(context, str):
+            context = {
+                "title": "Cas pratique / contexte",
+                "text": context,
+                "collapsible": True,
+            }
+
+        if isinstance(context, dict):
+            title = str(
+                context.get("title")
+                or context.get("label")
+                or "Cas pratique / contexte"
+            ).strip()
+            text = str(
+                context.get("text")
+                or context.get("content")
+                or context.get("description")
+                or ""
+            ).strip()
+            collapsible = bool(context.get("collapsible", True))
+            expanded = bool(context.get("expanded", False))
+            context_media = context.get("media")
+
+            if collapsible:
+                with st.expander(title, expanded=expanded):
+                    if text:
+                        st.markdown(text)
+                    render_question_media(context_media)
+            else:
+                st.markdown(f"#### {title}")
+                if text:
+                    st.markdown(text)
+                render_question_media(context_media)
+
+    render_question_media(top_media)
+
+
 def render_creator_question(question: Dict[str, Any], index: int) -> None:
     qtype = question.get("type", "")
     score = int(question.get("quality_score") or 0)
@@ -2398,6 +2517,7 @@ def render_creator_question(question: Dict[str, Any], index: int) -> None:
 
         st.markdown(f"**Compétence évaluée :** {question.get('competency', '')}")
         st.markdown(f"**Notion évaluée :** {question.get('concept_evaluated', '')}")
+        render_question_context_and_media(question)
         st.markdown(question.get("question", ""))
 
         pairs = question.get("pairs") or []
@@ -2493,6 +2613,7 @@ def render_creator_question(question: Dict[str, Any], index: int) -> None:
 def render_test_question(question: Dict[str, Any], index: int) -> Any:
     qtype = question.get("type", "")
     st.markdown(f"### Question {index}")
+    render_question_context_and_media(question)
     if is_point_allocation_question(question) or is_priority_ranking_question(question):
         st.markdown(structured_activity_prompt_text(question))
     elif is_fill_blank_question(question):
@@ -2577,13 +2698,20 @@ def render_test_question(question: Dict[str, Any], index: int) -> Any:
         }
 
     if is_long_answer_question(question):
+        max_words = int(question.get("max_words") or 0)
         response = st.text_area(
             "Votre réponse rédigée",
             key=f"long_answer_{index}",
             height=280,
             placeholder="Rédigez votre réponse de manière structurée...",
         )
-        st.caption(f"{len(response.split())} mot(s)")
+        word_count = len(response.split())
+        if max_words:
+            st.caption(f"{word_count} / {max_words} mot(s)")
+            if word_count > max_words:
+                st.warning("La réponse dépasse la longueur indicative prévue.")
+        else:
+            st.caption(f"{word_count} mot(s)")
         return response
 
     if is_fill_blank_question(question):
@@ -2705,6 +2833,7 @@ def render_test_question(question: Dict[str, Any], index: int) -> Any:
 def render_session_question(question: Dict[str, Any], index: int, session_id: int) -> Any:
     qtype = question.get("type", "")
     st.markdown(f"### Question {index}")
+    render_question_context_and_media(question)
     if is_point_allocation_question(question) or is_priority_ranking_question(question):
         st.markdown(structured_activity_prompt_text(question))
     elif is_fill_blank_question(question):

@@ -184,6 +184,24 @@ def classify_question(question: Dict[str, Any]) -> Dict[str, Any]:
     reasons: List[str] = []
     issues: List[str] = []
 
+    if bool(question.get("schema_type_locked")) and declared:
+        return {
+            "schema_version": QUESTION_SCHEMA_VERSION,
+            "declared_type_raw": str(raw_type or ""),
+            "declared_type": declared,
+            "detected_type": declared,
+            "confidence": "high",
+            "needs_review": False,
+            "issues": [],
+            "reasons": ["type validé manuellement par le formateur"],
+            "suggested_patch": {
+                "schema_version": QUESTION_SCHEMA_VERSION,
+                "type": declared,
+                "schema_type_locked": True,
+            },
+            "question_preview": text[:240],
+        }
+
     if re.search(r"\[\s*(?:\.\.\.|…+)\s*\]", text):
         detected = "fill_blank"
         confidence = "high"

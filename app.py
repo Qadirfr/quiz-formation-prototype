@@ -38,7 +38,12 @@ from utils.learner_db import (
     start_attempt,
 )
 from utils.quiz_agents import QuizConfig, analyze_training_content, orchestrate_quiz_generation
-from utils.table_import import read_quiz_table, template_csv_bytes
+from utils.table_import import (
+    read_quiz_table,
+    template_csv_bytes,
+    template_json_bytes,
+    validate_imported_quiz,
+)
 from utils.session_db import (
     create_training_session,
     generate_session_code,
@@ -3162,40 +3167,138 @@ def trainer_app() -> None:
     with tab_input:
         st.subheader("Importer ou coller un support de formation")
 
-        with st.expander("Charger un quiz structuré depuis CSV ou Excel", expanded=True):
+        with st.expander(
+            "Import industriel — CSV / Excel / JSON",
+            expanded=True,
+        ):
             st.markdown(
-                "La V8 accepte maintenant les colonnes `domain`, `subdomain`, `learning_objective`, "
-                "`feedback_a` à `feedback_d`, `remediation` et `accepted_answers`."
+                "Importe un lot de questions enrichies avec les mêmes possibilités que la création manuelle : "
+                "cas pratique, image, QCM, réponse libre, priorisation, ordonnancement, etc. "
+                "Le fichier est contrôlé avant ajout."
             )
 
-            st.download_button(
-                "Télécharger un modèle CSV enrichi",
-                data=template_csv_bytes(),
-                file_name="modele_import_quiz_enrichi.csv",
-                mime="text/csv",
-                width="stretch",
+            tpl1, tpl2 = st.columns(2)
+            with tpl1:
+                st.download_button(
+                    "Télécharger le modèle CSV enrichi",
+                    data=template_csv_bytes(),
+                    file_name="modele_import_industriel_quiz.csv",
+                    mime="text/csv",
+                    width="stretch",
+                )
+            with tpl2:
+                st.download_button(
+                    "Télécharger le modèle JSON enrichi",
+                    data=template_json_bytes(),
+                    file_name="modele_import_industriel_quiz.json",
+                    mime="application/json",
+                    width="stretch",
+                )
+
+            st.caption(
+                "Excel XLSX est également accepté : utilise les mêmes colonnes que le modèle CSV."
             )
 
             structured_file = st.file_uploader(
-                "Fichier CSV ou Excel de questions",
-                type=["csv", "xlsx"],
+                "Fichier de questions à importer",
+                type=["csv", "xlsx", "json"],
                 key="structured_quiz_file",
             )
 
-            if st.button("Charger ce fichier comme quiz", width="stretch"):
+            if st.button(
+                "Analyser le fichier",
+                width="stretch",
+                key="analyze_structured_import",
+            ):
                 if structured_file is None:
-                    st.warning("Ajoute d'abord un fichier CSV ou Excel.")
+                    st.warning("Ajoute d'abord un fichier CSV, XLSX ou JSON.")
                 else:
                     try:
                         imported_quiz = read_quiz_table(structured_file)
-                        st.session_state.quiz = imported_quiz
-                        st.session_state.analysis = imported_quiz.get("analysis")
-                        st.session_state.last_saved_id = None
-                        st.success(
-                            f"Quiz importé : {len(imported_quiz.get('questions', []))} question(s)."
-                        )
+                        import_report = validate_imported_quiz(imported_quiz)
+                        st.session_state.industrial_import_quiz = imported_quiz
+                        st.session_state.industrial_import_report = import_report
                     except Exception as exc:
+                        st.session_state.industrial_import_quiz = None
+                        st.session_state.industrial_import_report = None
                         st.error(f"Import impossible : {exc}")
+
+            imported_quiz = st.session_state.get("industrial_import_quiz")
+            import_report = st.session_state.get("industrial_import_report")
+
+            if imported_quiz and import_report:
+                m1, m2, m3 = st.columns(3)
+                m1.metric("Questions détectées", import_report.get("question_count", 0))
+                m2.metric("Erreurs bloquantes", import_report.get("error_count", 0))
+                m3.metric("Avertissements", import_report.get("warning_count", 0))
+
+                if import_report.get("valid"):
+                    st.success(
+                        "Structure valide : le lot peut être chargé dans Quiz créateur "
+                        "ou ajouté directement à la banque."
+                    )
+                else:
+                    st.error(
+                        "Le fichier contient des erreurs bloquantes. Corrige-les avant l'import."
+                    )
+
+                with st.expander("Voir le rapport de contrôle", expanded=not import_report.get("valid")):
+                    errors = import_report.get("errors") or []
+                    warnings = import_report.get("warnings") or []
+                    if errors:
+                        st.markdown("**Erreurs**")
+                        for item in errors:
+                            st.error(item)
+                    if warnings:
+                        st.markdown("**Avertissements**")
+                        for item in warnings:
+                            st.warning(item)
+                    if not errors and not warnings:
+                        st.success("Aucune anomalie détectée.")
+
+                    report_rows = []
+                    for row in import_report.get("questions") or []:
+                        report_rows.append({
+                            "Q": row.get("index"),
+                            "Type": row.get("type"),
+                            "Domaine": row.get("domain"),
+                            "Question": row.get("question"),
+                            "Erreurs": " | ".join(row.get("errors") or []),
+                            "Avertissements": " | ".join(row.get("warnings") or []),
+                        })
+                    if report_rows:
+                        st.dataframe(
+                            report_rows,
+                            width="stretch",
+                            hide_index=True,
+                        )
+
+                if import_report.get("valid"):
+                    act1, act2 = st.columns(2)
+                    with act1:
+                        if st.button(
+                            "Charger dans Quiz créateur",
+                            type="primary",
+                            width="stretch",
+                            key="load_industrial_import_quiz",
+                        ):
+                            st.session_state.quiz = imported_quiz
+                            st.session_state.analysis = imported_quiz.get("analysis")
+                            st.session_state.last_saved_id = None
+                            st.success(
+                                f"Quiz chargé : {len(imported_quiz.get('questions', []))} question(s)."
+                            )
+                    with act2:
+                        if st.button(
+                            "Ajouter directement à la banque",
+                            width="stretch",
+                            key="add_industrial_import_to_bank",
+                        ):
+                            result = add_quiz_to_bank(imported_quiz)
+                            st.success(
+                                f"Ajout terminé : {result['added']} nouvelle(s) question(s), "
+                                f"{result['ignored']} doublon(s) ou question(s) ignorée(s)."
+                            )
 
         uploaded_file = st.file_uploader(
             "Ou importe un support de formation pour générer un quiz",

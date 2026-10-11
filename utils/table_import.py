@@ -86,6 +86,17 @@ def parse_int(value: Any, default: int = 80) -> int:
         return default
 
 
+def parse_bool(value: Any, default: bool = False) -> bool:
+    text = normalize_header(value)
+    if not text:
+        return default
+    if text in {"1", "true", "vrai", "oui", "yes", "y"}:
+        return True
+    if text in {"0", "false", "faux", "non", "no", "n"}:
+        return False
+    return default
+
+
 def normalize_type(value: str) -> str:
     key = normalize_header(value)
     return TYPE_MAP.get(key, key or "single_choice")
@@ -303,6 +314,93 @@ def rows_to_quiz(rows: List[Dict[str, Any]], filename: str = "quiz") -> Dict[str
             "quality_notes": get_value(row, "quality_notes", "notes_qualite") or "Question importee depuis un fichier structure.",
         }
 
+        context_text = get_value(
+            row,
+            "context_text",
+            "case_context",
+            "case_text",
+            "cas_pratique",
+            "contexte",
+        )
+        if context_text:
+            question["context"] = {
+                "title": get_value(
+                    row,
+                    "context_title",
+                    "case_title",
+                    "titre_cas",
+                ) or "Cas pratique / contexte",
+                "text": context_text,
+                "collapsible": parse_bool(
+                    get_value(
+                        row,
+                        "context_collapsible",
+                        "case_collapsible",
+                    ),
+                    True,
+                ),
+            }
+
+        media_url = get_value(
+            row,
+            "media_url",
+            "image_url",
+            "illustration_url",
+        )
+        if media_url:
+            question["media"] = {
+                "type": get_value(row, "media_type", "type_media") or "image",
+                "url": media_url,
+                "caption": get_value(
+                    row,
+                    "media_caption",
+                    "image_caption",
+                    "legende_media",
+                ),
+                "alt_text": get_value(
+                    row,
+                    "media_alt_text",
+                    "image_alt_text",
+                    "texte_alternatif",
+                ),
+            }
+
+        total_points = get_value(row, "total_points", "points_total")
+        if total_points:
+            question["total_points"] = parse_int(total_points, 0)
+
+        ranking_mode = get_value(row, "ranking_mode", "mode_priorisation")
+        if ranking_mode:
+            question["ranking_mode"] = normalize_header(ranking_mode)
+
+        require_justification = get_value(
+            row,
+            "require_justification",
+            "justification_requise",
+        )
+        if require_justification:
+            question["require_justification"] = parse_bool(
+                require_justification,
+                True,
+            )
+
+        max_words = get_value(row, "max_words", "nombre_mots_max")
+        if max_words:
+            question["max_words"] = parse_int(max_words, 0)
+
+        criteria_raw = get_value(
+            row,
+            "evaluation_criteria",
+            "grading_criteria",
+            "criteres_evaluation",
+        )
+        if criteria_raw:
+            question["evaluation_criteria"] = [
+                item.strip()
+                for item in re.split(r"[|;]", criteria_raw)
+                if item.strip()
+            ]
+
         questions.append(question)
 
     if not questions:
@@ -331,7 +429,7 @@ def read_quiz_table(uploaded_file) -> Dict[str, Any]:
 
 
 def template_csv_bytes() -> bytes:
-    content = """quiz_title;module;domain;subdomain;type;difficulty;cognitive_level;learning_objective;competency;concept_evaluated;question;option_a;option_b;option_c;option_d;correct_answer;accepted_answers;explanation;feedback_a;feedback_b;feedback_c;feedback_d;remediation;source_excerpt;pair_1_left;pair_1_right;pair_2_left;pair_2_right;pair_3_left;pair_3_right
+    content = """quiz_title;module;domain;subdomain;type;difficulty;cognitive_level;learning_objective;competency;concept_evaluated;question;option_a;option_b;option_c;option_d;correct_answer;accepted_answers;explanation;feedback_a;feedback_b;feedback_c;feedback_d;remediation;source_excerpt;pair_1_left;pair_1_right;pair_2_left;pair_2_right;pair_3_left;pair_3_right;context_title;context_text;context_collapsible;media_type;media_url;media_caption;media_alt_text;total_points;ranking_mode;require_justification;max_words;evaluation_criteria
 Examen civique naturalisation - Entrainement 1;Examen civique;Symboles de la Republique;Devise;single_choice;Debutant;Memorisation;Identifier les symboles de la Republique;Connaitre la devise republicaine;Devise;Quelle est la devise de la Republique francaise ?;Liberte, ordre, patrie;Liberte, egalite, fraternite;Travail, famille, patrie;Unite, force, justice;B;;La devise de la Republique francaise est Liberte, egalite, fraternite.;Incorrect. Cette formule n'est pas la devise officielle actuelle.;Correct. Liberte, egalite, fraternite est la devise officielle de la Republique francaise.;Incorrect. Cette devise est associee au regime de Vichy, pas a la Republique actuelle.;Incorrect. Cette formulation n'est pas la devise officielle.;Revoir les symboles de la Republique : devise, drapeau, hymne, Marianne.;La devise officielle de la Republique est Liberte, egalite, fraternite.;;;;;;
 Examen civique naturalisation - Entrainement 1;Examen civique;Institutions;Parlement;single_choice;Intermediaire;Comprehension;Distinguer les institutions et leurs roles;Identifier l'institution qui vote la loi;Parlement;Qui vote les lois en France ?;Le Parlement;Le President de la Republique;Le Conseil constitutionnel;Le Gouvernement;A;;Le Parlement vote les lois. Il comprend l'Assemblee nationale et le Senat.;Correct. Le Parlement est l'institution qui vote les lois.;Incorrect. Le President promulgue les lois et nomme le Premier ministre, mais il ne vote pas les lois.;Incorrect. Le Conseil constitutionnel controle la conformite des lois a la Constitution.;Incorrect. Le Gouvernement conduit la politique nationale et peut proposer des projets de loi, mais il ne vote pas les lois.;Revoir le role du Parlement, du Gouvernement et du President.;Le Parlement comprend l'Assemblee nationale et le Senat.;;;;;;
 Examen civique naturalisation - Entrainement 1;Examen civique;Symboles de la Republique;Symboles;matching;Debutant;Comprehension;Associer les symboles republicains a leur signification;Reconnaitre les symboles republicains;Symboles;Associez chaque symbole a sa signification.;;;;;Voir les paires;;Chaque symbole renvoie a une notion republicaine precise.;;;;;Revoir les principaux symboles de la Republique francaise.;Marianne represente la Republique, la Marseillaise est l'hymne national, bleu blanc rouge correspond au drapeau.;Marianne;Republique;La Marseillaise;Hymne national;Bleu, blanc, rouge;Drapeau francais

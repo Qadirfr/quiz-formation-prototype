@@ -95,6 +95,10 @@ def init_learner_db() -> None:
                         created_at timestamptz NOT NULL DEFAULT now()
                     )
                 """)
+                cur.execute(
+                    "ALTER TABLE learner_answers "
+                    "ADD COLUMN IF NOT EXISTS question_snapshot_json jsonb"
+                )
             conn.commit()
         return
 
@@ -151,6 +155,7 @@ def init_learner_db() -> None:
             "selected_feedback": "TEXT",
             "correct_feedback": "TEXT",
             "remediation": "TEXT",
+            "question_snapshot_json": "TEXT",
         }
         for name, typ in extras.items():
             if name not in cols:
@@ -262,6 +267,7 @@ def save_attempt_result(
         selected_feedback,
         correct_feedback,
         question.get("remediation", "") or question.get("piste_de_revision", ""),
+        _json_value(question),
     )
 
     if _pg():
@@ -271,9 +277,9 @@ def save_attempt_result(
                 user_answer_json, correct_answer_json, is_correct, score,
                 domain, subdomain, learning_objective, concept_evaluated,
                 cognitive_level, competency, explanation, selected_feedback,
-                correct_feedback, remediation
+                correct_feedback, remediation, question_snapshot_json
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """
         with get_connection() as conn:
             with conn.cursor() as cur:
@@ -287,9 +293,9 @@ def save_attempt_result(
             user_answer_json, correct_answer_json, is_correct, score,
             domain, subdomain, learning_objective, concept_evaluated,
             cognitive_level, competency, explanation, selected_feedback,
-            correct_feedback, remediation
+            correct_feedback, remediation, question_snapshot_json
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """
     with get_connection() as conn:
         conn.execute(sql, values)
@@ -476,7 +482,8 @@ def get_attempt_answers(attempt_id: int) -> List[Dict[str, Any]]:
                 score::float AS score,
                 domain, subdomain, learning_objective, concept_evaluated,
                 cognitive_level, competency, explanation,
-                selected_feedback, correct_feedback, remediation, created_at
+                selected_feedback, correct_feedback, remediation,
+                question_snapshot_json, created_at
             FROM learner_answers
             WHERE attempt_id = %s
             ORDER BY question_index ASC
@@ -490,7 +497,8 @@ def get_attempt_answers(attempt_id: int) -> List[Dict[str, Any]]:
                 score,
                 domain, subdomain, learning_objective, concept_evaluated,
                 cognitive_level, competency, explanation,
-                selected_feedback, correct_feedback, remediation, created_at
+                selected_feedback, correct_feedback, remediation,
+                question_snapshot_json, created_at
             FROM learner_answers
             WHERE attempt_id = ?
             ORDER BY question_index ASC
@@ -502,4 +510,11 @@ def get_attempt_answers(attempt_id: int) -> List[Dict[str, Any]]:
             item["is_correct"] = bool(item["is_correct"])
         item["user_answer_json"] = _json_display(item.get("user_answer_json"))
         item["correct_answer_json"] = _json_display(item.get("correct_answer_json"))
+        snapshot = item.get("question_snapshot_json")
+        if isinstance(snapshot, str):
+            try:
+                snapshot = json.loads(snapshot)
+            except Exception:
+                snapshot = {}
+        item["question_snapshot_json"] = snapshot if isinstance(snapshot, dict) else {}
     return rows

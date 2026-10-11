@@ -104,14 +104,39 @@ def normalize_text(value: Any) -> str:
 
 
 def make_question_hash(question: Dict[str, Any]) -> str:
-    base = "|".join(
-        [
-            normalize_text(question.get("type", "")),
-            normalize_text(question.get("question", "")),
-            normalize_text(question.get("correct_answer", "")),
-            normalize_text(json.dumps(question.get("pairs", []), ensure_ascii=False, sort_keys=True)),
-        ]
+    parts = [
+        normalize_text(question.get("type", "")),
+        normalize_text(question.get("question", "")),
+        normalize_text(question.get("correct_answer", "")),
+        normalize_text(json.dumps(question.get("pairs", []), ensure_ascii=False, sort_keys=True)),
+    ]
+
+    # Préserve exactement l'ancienne empreinte pour les questions sans support.
+    # Si un cas pratique ou un média existe, il devient partie intégrante de
+    # l'identité de la question afin d'éviter de fusionner deux cas différents.
+    context_payload = (
+        question.get("context")
+        or question.get("case_context")
+        or question.get("case_study")
+        or ""
     )
+    media_payload = question.get("media") or question.get("image_url") or ""
+    if context_payload or media_payload:
+        parts.append(
+            normalize_text(
+                json.dumps(
+                    {
+                        "context": context_payload,
+                        "media": media_payload,
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    default=str,
+                )
+            )
+        )
+
+    base = "|".join(parts)
     return hashlib.sha256(base.encode("utf-8")).hexdigest()
 
 
@@ -1789,6 +1814,33 @@ def _normalize_completion_patch(
             raise ValueError("Les paires d'appariement sont incomplètes.")
         cleaned["pairs"] = normalized_pairs
 
+    elif target_type == "short_answer":
+        accepted = cleaned.get("accepted_answers") or []
+        if isinstance(accepted, str):
+            accepted = [
+                part.strip()
+                for part in __import__("re").split(r"[|;\n]", accepted)
+                if part.strip()
+            ]
+        cleaned["accepted_answers"] = list(accepted) if isinstance(accepted, list) else []
+        max_words = cleaned.get("max_words")
+        if max_words not in (None, ""):
+            try:
+                max_words = int(max_words)
+            except Exception:
+                raise ValueError("Le nombre maximal de mots doit être un entier.")
+            if max_words <= 0:
+                raise ValueError("Le nombre maximal de mots doit être positif.")
+            cleaned["max_words"] = max_words
+        else:
+            cleaned.pop("max_words", None)
+
+    elif target_type == "self_assessment":
+        cleaned["scale_min"] = int(cleaned.get("scale_min") or 1)
+        cleaned["scale_max"] = int(cleaned.get("scale_max") or 5)
+        if cleaned["scale_min"] >= cleaned["scale_max"]:
+            raise ValueError("L'échelle d'auto-positionnement est invalide.")
+
     elif target_type in {"single_choice", "true_false"}:
         options = cleaned.get("options")
         if isinstance(options, str):
@@ -1837,7 +1889,27 @@ def apply_cdpo_completion_patch(
             f"Question {qid} n'est plus classée orange au moment de la validation."
         )
 
-    target_type = str(audit_row.get("detected_type") or "")
+    completion_patch = dict(completion_patch or {})
+    requested_type = str(
+        completion_patch.pop("_target_type_override", "") or ""
+    ).strip()
+    detected_type = str(audit_row.get("detected_type") or "")
+    allowed_types = {
+        "single_choice",
+        "true_false",
+        "matching",
+        "ordering",
+        "fill_blank",
+        "self_assessment",
+        "point_allocation",
+        "priority_ranking",
+        "short_answer",
+        "long_answer",
+    }
+    if requested_type and requested_type not in allowed_types:
+        raise ValueError(f"Type de question non autorisé : {requested_type}")
+
+    target_type = requested_type or detected_type
     cleaned_patch = _normalize_completion_patch(target_type, completion_patch)
 
     previous_question = dict(row.get("question_json") or {})
@@ -1846,6 +1918,19 @@ def apply_cdpo_completion_patch(
     new_question.update(cleaned_patch)
     new_question["type"] = target_type
     new_question["schema_version"] = 2
+    new_question["schema_type_locked"] = True
+    new_question["schema_type_source"] = "trainer_review"
+
+    # Nettoie les champs incompatibles lorsqu'un formateur remplace le type proposé.
+    if target_type != "point_allocation":
+        new_question.pop("total_points", None)
+    if target_type != "priority_ranking":
+        new_question.pop("ranking_mode", None)
+        new_question.pop("top_n", None)
+    if target_type not in {"point_allocation", "priority_ranking"}:
+        new_question.pop("require_justification", None)
+    if target_type in {"short_answer", "long_answer"}:
+        new_question.pop("items", None)
 
     # Validations de cohérence propres aux types structurés.
     if target_type == "priority_ranking":
@@ -2043,6 +2128,8 @@ def apply_cdpo_completion_patch(
         "target_type": target_type,
         "issues_before": list(audit_row.get("issues") or []),
         "issues_after": list(validation.get("issues") or []),
+        "detected_type_before": detected_type,
+        "trainer_override": bool(requested_type and requested_type != detected_type),
     }
 
 

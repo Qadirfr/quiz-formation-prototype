@@ -72,6 +72,7 @@ from utils.question_bank import (
     build_safe_cdpo_migration_preview,
     apply_safe_cdpo_question_migration,
     build_cdpo_completion_preview,
+    build_cdpo_manual_review_preview,
     apply_cdpo_completion_patch,
     list_question_schema_migration_log,
     select_adaptive_questions,
@@ -4004,10 +4005,10 @@ def trainer_app() -> None:
                                         )
                                     ),
                                 )
-                                completion_patch = {
+                                completion_patch.update({
                                     "total_points": total_points_text,
                                     "require_justification": require_justification,
-                                }
+                                })
 
                             elif selected_orange_type == "priority_ranking":
                                 existing_mode = str(
@@ -4048,11 +4049,11 @@ def trainer_app() -> None:
                                         )
                                     ),
                                 )
-                                completion_patch = {
+                                completion_patch.update({
                                     "ranking_mode": ranking_mode,
                                     "top_n": top_n,
                                     "require_justification": require_justification,
-                                }
+                                })
 
                             elif selected_orange_type == "long_answer":
                                 existing_criteria = (
@@ -4083,10 +4084,10 @@ def trainer_app() -> None:
                                     ),
                                     placeholder="Exemple : 10",
                                 )
-                                completion_patch = {
+                                completion_patch.update({
                                     "evaluation_criteria": criteria_text,
                                     "max_points": max_points_text,
-                                }
+                                })
 
                             elif selected_orange_type == "fill_blank":
                                 existing_answers = (
@@ -4103,9 +4104,9 @@ def trainer_app() -> None:
                                     value=answers_default,
                                     height=150,
                                 )
-                                completion_patch = {
+                                completion_patch.update({
                                     "correct_answers": answers_text,
-                                }
+                                })
 
                             elif selected_orange_type == "ordering":
                                 existing_order = (
@@ -4124,9 +4125,9 @@ def trainer_app() -> None:
                                     value=order_default,
                                     placeholder="Exemple : ABCDE",
                                 )
-                                completion_patch = {
+                                completion_patch.update({
                                     "correct_order": order_text,
-                                }
+                                })
 
                             elif selected_orange_type == "matching":
                                 existing_pairs = orange_question.get("pairs") or []
@@ -4142,9 +4143,9 @@ def trainer_app() -> None:
                                     value="\n".join(pair_lines),
                                     height=180,
                                 )
-                                completion_patch = {
+                                completion_patch.update({
                                     "_pairs_text": pairs_text,
-                                }
+                                })
 
                             elif selected_orange_type in {"single_choice", "true_false"}:
                                 existing_options = orange_question.get("options") or []
@@ -4161,10 +4162,10 @@ def trainer_app() -> None:
                                         orange_question.get("correct_answer") or ""
                                     ),
                                 )
-                                completion_patch = {
+                                completion_patch.update({
                                     "options": options_text,
                                     "correct_answer": correct_answer_text,
-                                }
+                                })
 
                             elif selected_orange_type == "short_answer":
                                 accepted_default = orange_question.get("accepted_answers") or []

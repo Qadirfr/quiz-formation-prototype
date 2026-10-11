@@ -3703,6 +3703,359 @@ def trainer_app() -> None:
                                 f"{len(log_rows)} entrée(s) journalisée(s)."
                             )
 
+                    st.markdown("---")
+                    st.markdown("### Correction assistée — questions orange")
+                    st.caption(
+                        "Les questions orange ont un type identifiable mais une donnée "
+                        "manque. On complète une question à la fois, avec sauvegarde "
+                        "avant/après. Les quiz sauvegardés restent inchangés."
+                    )
+
+                    orange_saved_count = sum(
+                        1
+                        for row in rows
+                        if row.get("source_kind") == "Quiz sauvegardé"
+                        and audit_action(row) == "needs_completion"
+                    )
+
+                    if st.button(
+                        "Charger / actualiser les questions orange de la banque CDPO",
+                        key="load_orange_cdpo_questions",
+                        width="stretch",
+                    ):
+                        st.session_state.orange_cdpo_completion_preview = (
+                            build_cdpo_completion_preview(limit=5000)
+                        )
+
+                    notice = st.session_state.pop(
+                        "orange_cdpo_completion_notice",
+                        None,
+                    )
+                    if notice:
+                        st.success(notice)
+
+                    orange_preview = st.session_state.get(
+                        "orange_cdpo_completion_preview"
+                    )
+                    if orange_preview is None:
+                        orange_preview = build_cdpo_completion_preview(limit=5000)
+                        st.session_state.orange_cdpo_completion_preview = orange_preview
+
+                    orange_candidates = orange_preview.get("candidates") or []
+                    o1, o2 = st.columns(2)
+                    o1.metric(
+                        "Orange dans la banque CDPO",
+                        len(orange_candidates),
+                    )
+                    o2.metric(
+                        "Orange dans les quiz sauvegardés",
+                        orange_saved_count,
+                    )
+
+                    if orange_saved_count:
+                        st.info(
+                            "Les questions orange présentes dans des quiz déjà sauvegardés "
+                            "seront traitées séparément après la banque."
+                        )
+
+                    if not orange_candidates:
+                        st.success(
+                            "Plus aucune question orange dans la banque CDPO active."
+                        )
+                    else:
+                        orange_labels = [
+                            (
+                                f"#{item.get('id')} — {item.get('target_type')} — "
+                                f"{item.get('domain') or 'Non classé'} — "
+                                f"{(item.get('question_preview') or '')[:90]}"
+                            )
+                            for item in orange_candidates
+                        ]
+                        orange_index = st.selectbox(
+                            "Question orange à compléter",
+                            options=list(range(len(orange_candidates))),
+                            format_func=lambda i: orange_labels[i],
+                            key="orange_cdpo_question_select",
+                        )
+                        orange_item = orange_candidates[orange_index]
+                        orange_question = orange_item.get("question") or {}
+                        orange_type = orange_item.get("target_type") or ""
+                        orange_issues = orange_item.get("issues") or []
+                        orange_suggested = orange_item.get("suggested_patch") or {}
+                        orange_items = (
+                            orange_question.get("items")
+                            or orange_suggested.get("items")
+                            or []
+                        )
+
+                        st.markdown(
+                            f"**Question #{orange_item.get('id')} — type proposé : "
+                            f"{orange_type}**"
+                        )
+                        st.write(orange_item.get("question_preview") or "")
+                        st.caption(
+                            "Anomalie(s) : "
+                            + (" | ".join(orange_issues) if orange_issues else "—")
+                        )
+
+                        if orange_items:
+                            st.markdown("**Éléments structurés détectés**")
+                            for item in orange_items:
+                                if isinstance(item, dict):
+                                    st.write(
+                                        f"{item.get('label', '')}. "
+                                        f"{item.get('text', '')}"
+                                    )
+                                else:
+                                    st.write(str(item))
+
+                        with st.form(
+                            f"orange_completion_form_{orange_item.get('id')}"
+                        ):
+                            completion_patch = {}
+
+                            if orange_type == "point_allocation":
+                                total_default = orange_question.get("total_points")
+                                total_points_text = st.text_input(
+                                    "Total de points à répartir",
+                                    value=(
+                                        str(total_default)
+                                        if total_default not in (None, "")
+                                        else ""
+                                    ),
+                                    placeholder="Exemple : 100",
+                                )
+                                require_justification = st.checkbox(
+                                    "Demander une justification de l'arbitrage",
+                                    value=bool(
+                                        orange_question.get(
+                                            "require_justification",
+                                            True,
+                                        )
+                                    ),
+                                )
+                                completion_patch = {
+                                    "total_points": total_points_text,
+                                    "require_justification": require_justification,
+                                }
+
+                            elif orange_type == "priority_ranking":
+                                existing_mode = str(
+                                    orange_question.get("ranking_mode") or ""
+                                )
+                                mode_labels = {
+                                    "": "— Choisir —",
+                                    "rank_all": "Classer tous les éléments",
+                                    "top_n": "Sélectionner et classer un Top N",
+                                }
+                                mode_values = ["", "rank_all", "top_n"]
+                                default_index = (
+                                    mode_values.index(existing_mode)
+                                    if existing_mode in mode_values
+                                    else 0
+                                )
+                                ranking_mode = st.selectbox(
+                                    "Mode de priorisation",
+                                    options=mode_values,
+                                    index=default_index,
+                                    format_func=lambda value: mode_labels[value],
+                                )
+                                top_n = ""
+                                if ranking_mode == "top_n":
+                                    top_n = st.text_input(
+                                        "Nombre de priorités à retenir",
+                                        value=str(
+                                            orange_question.get("top_n") or ""
+                                        ),
+                                        placeholder="Exemple : 3",
+                                    )
+                                require_justification = st.checkbox(
+                                    "Demander une justification de l'arbitrage",
+                                    value=bool(
+                                        orange_question.get(
+                                            "require_justification",
+                                            True,
+                                        )
+                                    ),
+                                )
+                                completion_patch = {
+                                    "ranking_mode": ranking_mode,
+                                    "top_n": top_n,
+                                    "require_justification": require_justification,
+                                }
+
+                            elif orange_type == "long_answer":
+                                existing_criteria = (
+                                    orange_question.get("evaluation_criteria")
+                                    or orange_question.get("rubric")
+                                    or []
+                                )
+                                if isinstance(existing_criteria, list):
+                                    criteria_default = "\n".join(
+                                        str(item) for item in existing_criteria
+                                    )
+                                else:
+                                    criteria_default = str(existing_criteria or "")
+                                criteria_text = st.text_area(
+                                    "Critères d'évaluation — un critère par ligne",
+                                    value=criteria_default,
+                                    height=180,
+                                    placeholder=(
+                                        "Identifier les obligations applicables\n"
+                                        "Justifier le raisonnement\n"
+                                        "Proposer une recommandation opérationnelle"
+                                    ),
+                                )
+                                max_points_text = st.text_input(
+                                    "Barème maximal (facultatif)",
+                                    value=str(
+                                        orange_question.get("max_points") or ""
+                                    ),
+                                    placeholder="Exemple : 10",
+                                )
+                                completion_patch = {
+                                    "evaluation_criteria": criteria_text,
+                                    "max_points": max_points_text,
+                                }
+
+                            elif orange_type == "fill_blank":
+                                existing_answers = (
+                                    orange_question.get("correct_answers") or []
+                                )
+                                if isinstance(existing_answers, list):
+                                    answers_default = "\n".join(
+                                        str(item) for item in existing_answers
+                                    )
+                                else:
+                                    answers_default = str(existing_answers or "")
+                                answers_text = st.text_area(
+                                    "Réponses attendues — une réponse par trou",
+                                    value=answers_default,
+                                    height=150,
+                                )
+                                completion_patch = {
+                                    "correct_answers": answers_text,
+                                }
+
+                            elif orange_type == "ordering":
+                                existing_order = (
+                                    orange_question.get("correct_order")
+                                    or orange_question.get("expected_order")
+                                    or ""
+                                )
+                                if isinstance(existing_order, list):
+                                    order_default = "".join(
+                                        str(item) for item in existing_order
+                                    )
+                                else:
+                                    order_default = str(existing_order or "")
+                                order_text = st.text_input(
+                                    "Ordre attendu",
+                                    value=order_default,
+                                    placeholder="Exemple : ABCDE",
+                                )
+                                completion_patch = {
+                                    "correct_order": order_text,
+                                }
+
+                            elif orange_type == "matching":
+                                existing_pairs = orange_question.get("pairs") or []
+                                pair_lines = []
+                                for pair in existing_pairs:
+                                    if isinstance(pair, dict):
+                                        pair_lines.append(
+                                            f"{pair.get('left', '')} => "
+                                            f"{pair.get('right', '')}"
+                                        )
+                                pairs_text = st.text_area(
+                                    "Associations — une ligne par paire, format gauche => droite",
+                                    value="\n".join(pair_lines),
+                                    height=180,
+                                )
+                                completion_patch = {
+                                    "_pairs_text": pairs_text,
+                                }
+
+                            elif orange_type in {"single_choice", "true_false"}:
+                                existing_options = orange_question.get("options") or []
+                                options_text = st.text_area(
+                                    "Options — une par ligne",
+                                    value="\n".join(
+                                        str(item) for item in existing_options
+                                    ),
+                                    height=140,
+                                )
+                                correct_answer_text = st.text_input(
+                                    "Bonne réponse",
+                                    value=str(
+                                        orange_question.get("correct_answer") or ""
+                                    ),
+                                )
+                                completion_patch = {
+                                    "options": options_text,
+                                    "correct_answer": correct_answer_text,
+                                }
+
+                            else:
+                                st.warning(
+                                    "Ce type orange n'a pas encore d'éditeur dédié. "
+                                    "Ne valide pas cette question."
+                                )
+
+                            submitted_orange = st.form_submit_button(
+                                "Valider et sauvegarder cette correction",
+                                type="primary",
+                                disabled=orange_type not in {
+                                    "point_allocation",
+                                    "priority_ranking",
+                                    "long_answer",
+                                    "fill_blank",
+                                    "ordering",
+                                    "matching",
+                                    "single_choice",
+                                    "true_false",
+                                },
+                            )
+
+                        if submitted_orange:
+                            try:
+                                if "_pairs_text" in completion_patch:
+                                    pairs = []
+                                    for line in str(
+                                        completion_patch.pop("_pairs_text") or ""
+                                    ).splitlines():
+                                        if "=>" not in line:
+                                            continue
+                                        left, right = line.split("=>", 1)
+                                        left = left.strip()
+                                        right = right.strip()
+                                        if left and right:
+                                            pairs.append({
+                                                "left": left,
+                                                "right": right,
+                                            })
+                                    completion_patch["pairs"] = pairs
+
+                                result = apply_cdpo_completion_patch(
+                                    int(orange_item["id"]),
+                                    completion_patch,
+                                )
+                                st.session_state.orange_cdpo_completion_preview = (
+                                    build_cdpo_completion_preview(limit=5000)
+                                )
+                                st.session_state.orange_cdpo_completion_notice = (
+                                    f"Question #{result.get('question_id')} complétée "
+                                    f"et journalisée ({result.get('target_type')})."
+                                )
+                                st.rerun()
+                            except Exception as exc:
+                                st.error(f"Correction non appliquée : {exc}")
+
+                    st.caption(
+                        "Quand toutes les questions orange de la banque seront traitées, "
+                        "relance l'audit CDPO actif pour actualiser les compteurs."
+                    )
+
         current_quiz = st.session_state.quiz
         if current_quiz and not current_quiz.get("error"):
             if st.button("Ajouter le quiz actuellement chargé à la banque", type="primary", width="stretch"):

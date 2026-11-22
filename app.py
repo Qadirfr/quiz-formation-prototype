@@ -1,10 +1,9 @@
 from __future__ import annotations
 
 import base64
-import hashlib
+import hmac
 import math
 import json
-import os
 import re
 import time
 import unicodedata
@@ -24,6 +23,8 @@ from utils.database import (
     load_quiz,
     save_quiz,
 )
+from utils.backup_export import BackupExportError, create_backup_archive
+from utils.db_runtime import get_setting
 from utils.export_utils import quiz_to_csv_bytes, quiz_to_json_bytes, quiz_to_markdown, quiz_to_markdown_bytes
 from utils.file_reader import clean_training_text, read_uploaded_file
 from utils.learner_db import (
@@ -550,16 +551,44 @@ def _v23_1_init_databases_once():
     init_session_db()
     return True
 
-_v23_1_init_databases_once()
 
-LEARNER_ACCESS_CODE = os.environ.get("QUIZ_LEARNER_CODE", "CIVIQUE2026")
-TRAINER_PASSWORD = os.environ.get("QUIZ_TRAINER_PASSWORD", "formateur123")
+try:
+    _v23_1_init_databases_once()
+except Exception as startup_error:
+    # Show a safe, actionable message only for PostgreSQL connectivity failures.
+    # Other programming and schema errors must still surface in the Cloud logs.
+    from psycopg import OperationalError
+    from psycopg_pool import PoolTimeout
+
+    if not isinstance(startup_error, (OperationalError, PoolTimeout)):
+        raise
+
+    st.error("Connexion à la base de données indisponible.")
+    st.write(
+        "Quiz Formation ne peut pas charger les quiz et résultats pour le moment. "
+        "L'accès aux espaces formateur et apprenant est suspendu tant que "
+        "la connexion PostgreSQL n'est pas rétablie."
+    )
+    st.info(
+        "Administrateur : ouvrez « Manage app » puis les journaux Streamlit. "
+        "Vérifiez l'état de la base PostgreSQL, ainsi que APP_DATABASE_MODE "
+        "et DATABASE_URL dans les secrets de l'application."
+    )
+    st.caption(
+        "Aucun basculement automatique vers une base SQLite locale n'est effectué."
+    )
+    st.stop()
+
+LEARNER_ACCESS_CODE = get_setting("QUIZ_LEARNER_CODE", "CIVIQUE2026")
+TRAINER_PASSWORD = get_setting("QUIZ_TRAINER_PASSWORD", "") or ""
 
 
 def check_trainer_password(password: str) -> bool:
-    expected = hashlib.sha256(TRAINER_PASSWORD.encode("utf-8")).hexdigest()
-    provided = hashlib.sha256(password.encode("utf-8")).hexdigest()
-    return provided == expected
+    if not TRAINER_PASSWORD.strip():
+        return False
+    return hmac.compare_digest(
+        password.encode("utf-8"), TRAINER_PASSWORD.encode("utf-8")
+    )
 
 
 def init_state() -> None:
@@ -669,6 +698,7 @@ def logout() -> None:
         "last_completed_attempt_id",
         "active_directed_session_id",
         "active_directed_participant_id",
+        "full_backup_archive",
     ]
 
     for key in keys_to_clear:
@@ -2356,8 +2386,17 @@ def login_screen() -> None:
 
         trainer_password = st.text_input("Mot de passe formateur", type="password", key="login_trainer_password")
 
+        if not TRAINER_PASSWORD.strip():
+            st.info(
+                "L’accès formateur nécessite un mot de passe configuré. "
+                "Renseigne QUIZ_TRAINER_PASSWORD dans les secrets Streamlit "
+                "ou les variables d’environnement, puis relance l’application."
+            )
+
         if st.button("Entrer comme formateur", width="stretch"):
-            if check_trainer_password(trainer_password):
+            if not TRAINER_PASSWORD.strip():
+                st.error("L’accès formateur est désactivé tant que le mot de passe n’est pas configuré.")
+            elif check_trainer_password(trainer_password):
                 st.session_state.role = "trainer"
                 st.rerun()
             else:
@@ -2368,7 +2407,6 @@ def login_screen() -> None:
         "Prototype local : cette séparation masque les espaces dans l’interface. "
         "Ce n’est pas encore une authentification web sécurisée de production."
     )
-    st.caption("Code apprenant par défaut : CIVIQUE2026 | Mot de passe formateur par défaut : formateur123")
 
 
 def render_analysis(analysis: Dict[str, Any]) -> None:
@@ -3107,6 +3145,92 @@ def _manual_type_label(value: str) -> str:
         "long_answer": "Réponse rédigée longue",
     }
     return labels.get(value, value)
+
+
+def render_full_backup() -> None:
+    if st.session_state.get("role") != "trainer" or not TRAINER_PASSWORD.strip():
+        st.session_state.pop("full_backup_archive", None)
+        return
+
+    st.markdown("### Sauvegarder les données enregistrées")
+    st.write(
+        "Prépare une archive ZIP des quiz sauvegardés, de la banque de questions, "
+        "des sessions et des résultats apprenants. Enregistre tes brouillons avant "
+        "de lancer la sauvegarde."
+    )
+    st.caption(
+        "L’archive contient des données personnelles et des codes de session. "
+        "Conserve-la dans un emplacement réservé aux personnes autorisées. "
+        "Elle sert à conserver les données et ne se réimporte pas avec l’import de quiz."
+    )
+
+    if st.button("Préparer la sauvegarde ZIP", key="prepare_full_backup", width="stretch"):
+        st.session_state.pop("full_backup_archive", None)
+        try:
+            with st.spinner("Préparation de la sauvegarde…"):
+                st.session_state["full_backup_archive"] = create_backup_archive()
+        except BackupExportError as exc:
+            st.error(str(exc))
+        except Exception:
+            st.error(
+                "La sauvegarde n’a pas pu être préparée. Vérifie la disponibilité "
+                "de la base de données et réessaie. Aucune archive n’est proposée."
+            )
+
+    archive = st.session_state.get("full_backup_archive")
+    if archive is None:
+        return
+
+    if st.button("Effacer l’archive préparée", key="clear_full_backup"):
+        st.session_state.pop("full_backup_archive", None)
+        st.info("L’archive préparée a été effacée de cette session.")
+        return
+
+    manifest = archive.manifest
+    st.success("La sauvegarde est prête à télécharger.")
+    st.caption(
+        f"Créée le {manifest['created_at_utc']} · "
+        f"Base : {manifest['database_engine']} · "
+        f"Archive : {len(archive.data) / (1024 * 1024):.2f} Mio. "
+        "Les changements effectués ensuite nécessitent une nouvelle sauvegarde."
+    )
+    labels = {
+        "saved_quizzes": "Quiz sauvegardés",
+        "question_bank": "Questions en banque, actives ou non",
+        "learners": "Apprenants",
+        "quiz_attempts": "Tentatives de quiz",
+        "learner_answers": "Réponses aux quiz",
+        "training_sessions": "Sessions de formation",
+        "session_participants": "Participations aux sessions",
+        "session_answers": "Réponses aux sessions",
+        "question_schema_migration_log": "Journal de migration des questions",
+    }
+    st.dataframe(
+        [
+            {"Données": labels.get(name, name), "Lignes exportées": count}
+            for name, count in manifest["row_counts"].items()
+        ],
+        hide_index=True,
+        width="stretch",
+    )
+    media = manifest["media"]
+    st.caption(
+        f"Médias intégrés aux données : {media['embedded_count']} · "
+        f"Fichiers locaux inclus : {media['packed_count']} · "
+        f"Liens externes : {media['external_count']} · "
+        f"Références non incluses au total : {media['unresolved_count']}."
+    )
+    for warning in manifest["warnings"]:
+        st.warning(warning)
+    st.download_button(
+        "Télécharger la sauvegarde ZIP",
+        data=archive.data,
+        file_name=archive.filename,
+        mime="application/zip",
+        key="download_full_backup",
+        on_click="ignore",
+        width="stretch",
+    )
 
 
 def trainer_app() -> None:
@@ -4147,7 +4271,7 @@ Pour une image, renseigne `media_url`, puis éventuellement `media_caption` et `
             selected_attempt_index = st.selectbox(
                 "Choisir une tentative à afficher",
                 options=list(range(len(attempts))),
-                format_func=lambda i: labels[i],
+                format_func=lambda i, choices=labels: choices[i],
                 key="trainer_result_attempt_select",
             )
 
@@ -4172,7 +4296,7 @@ Pour une image, renseigne `media_url`, puis éventuellement `media_caption` et `
             selected_index = st.selectbox(
                 "Quiz sauvegardés",
                 options=list(range(len(saved_quizzes))),
-                format_func=lambda i: labels[i],
+                format_func=lambda i, choices=labels: choices[i],
             )
             selected = saved_quizzes[selected_index]
 
@@ -4203,6 +4327,9 @@ Pour une image, renseigne `media_url`, puis éventuellement `media_caption` et `
 
     with tab_export:
         st.subheader("Exporter")
+        render_full_backup()
+        st.divider()
+        st.markdown("### Exporter le quiz affiché")
         quiz = st.session_state.quiz
 
         if not quiz:
@@ -5991,7 +6118,7 @@ Pour une image, renseigne `media_url`, puis éventuellement `media_caption` et `
                 selected_index = st.selectbox(
                     "Quiz à utiliser",
                     options=list(range(len(saved_quizzes))),
-                    format_func=lambda i: labels[i],
+                    format_func=lambda i, choices=labels: choices[i],
                     key="session_saved_quiz_select",
                 )
                 selected_quiz_row = saved_quizzes[selected_index]
@@ -6169,7 +6296,11 @@ Pour une image, renseigne `media_url`, puis éventuellement `media_caption` et `
 
     with tab_settings:
         st.subheader("Paramètres d’accès")
-        st.write("Ces valeurs peuvent être changées par variables d’environnement avant de lancer Streamlit.")
+        st.write(
+            "Configure les accès dans les secrets Streamlit ou dans les variables "
+            "d’environnement. Les variables d’environnement sont prioritaires. "
+            "Le mot de passe formateur est obligatoire."
+        )
         st.code(
             '$env:QUIZ_LEARNER_CODE="MONCODE2026"\n'
             '$env:QUIZ_TRAINER_PASSWORD="MonMotDePasseFort"\n'
@@ -6557,7 +6688,7 @@ def learner_app() -> None:
                 selected_index = st.selectbox(
                     "Quiz disponible",
                     options=list(range(len(saved_quizzes))),
-                    format_func=lambda i: labels[i],
+                    format_func=lambda i, choices=labels: choices[i],
                     key="learner_quiz_select",
                 )
                 selected = saved_quizzes[selected_index]
@@ -6715,7 +6846,7 @@ def learner_app() -> None:
                 selected_attempt_index = st.selectbox(
                     "Choisir une tentative à afficher",
                     options=list(range(len(attempts))),
-                    format_func=lambda i: labels[i],
+                    format_func=lambda i, choices=labels: choices[i],
                     key="learner_result_attempt_select_v21_3",
                 )
 
@@ -6743,6 +6874,10 @@ def learner_app() -> None:
                             details[0] if details else "Aucune réponse",
                         )
 
+
+if st.session_state.role == "trainer" and not TRAINER_PASSWORD.strip():
+    st.session_state.role = None
+    st.session_state.pop("full_backup_archive", None)
 
 if st.session_state.role is None:
     login_screen()

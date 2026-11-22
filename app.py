@@ -5060,19 +5060,9 @@ Pour une image, renseigne `media_url`, puis éventuellement `media_caption` et `
                         if submitted_green:
                             try:
                                 if "_pairs_text" in green_patch:
-                                    parsed_pairs = []
-                                    for line in str(
+                                    green_patch["pairs"] = parse_matching_lines(
                                         green_patch.pop("_pairs_text") or ""
-                                    ).splitlines():
-                                        if "=>" not in line:
-                                            continue
-                                        left, right = line.split("=>", 1)
-                                        if left.strip() and right.strip():
-                                            parsed_pairs.append({
-                                                "left": left.strip(),
-                                                "right": right.strip(),
-                                            })
-                                    green_patch["pairs"] = parsed_pairs
+                                    )
 
                                 green_result = apply_cdpo_completion_patch(
                                     int(green_item["id"]),
@@ -5487,21 +5477,9 @@ Pour une image, renseigne `media_url`, puis éventuellement `media_caption` et `
                         if submitted_orange:
                             try:
                                 if "_pairs_text" in completion_patch:
-                                    pairs = []
-                                    for line in str(
+                                    completion_patch["pairs"] = parse_matching_lines(
                                         completion_patch.pop("_pairs_text") or ""
-                                    ).splitlines():
-                                        if "=>" not in line:
-                                            continue
-                                        left, right = line.split("=>", 1)
-                                        left = left.strip()
-                                        right = right.strip()
-                                        if left and right:
-                                            pairs.append({
-                                                "left": left,
-                                                "right": right,
-                                            })
-                                    completion_patch["pairs"] = pairs
+                                    )
 
                                 result = apply_cdpo_completion_patch(
                                     int(orange_item["id"]),
@@ -5815,19 +5793,9 @@ Pour une image, renseigne `media_url`, puis éventuellement `media_caption` et `
                         if submitted_red:
                             try:
                                 if "_pairs_text" in red_patch:
-                                    parsed_pairs = []
-                                    for line in str(
+                                    red_patch["pairs"] = parse_matching_lines(
                                         red_patch.pop("_pairs_text") or ""
-                                    ).splitlines():
-                                        if "=>" not in line:
-                                            continue
-                                        left, right = line.split("=>", 1)
-                                        if left.strip() and right.strip():
-                                            parsed_pairs.append({
-                                                "left": left.strip(),
-                                                "right": right.strip(),
-                                            })
-                                    red_patch["pairs"] = parsed_pairs
+                                    )
 
                                 red_result = apply_cdpo_completion_patch(
                                     int(red_item["id"]),

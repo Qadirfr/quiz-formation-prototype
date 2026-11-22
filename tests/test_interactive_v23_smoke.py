@@ -20,4 +20,4 @@ def test_trainer_can_preview_and_download_interactive_templates(monkeypatch, tmp
     enter.click().run()
     assert not at.exception, [e.message for e in at.exception]
     assert any(t.value == "Espace formateur" for t in at.title)
-    assert any("Télécharger le modèle Excel V24" in b.label for b in at.get("button") + at.get("download_button"))
+    assert any("Modèles simplifiés" in m.value for m in at.markdown)

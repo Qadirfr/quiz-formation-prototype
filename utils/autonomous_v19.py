@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from utils.matching import evaluate_matching_answer, matching_answer_error, ordered_matching_options
+
 import json
 import re
 from typing import Any, Dict, Optional
@@ -61,18 +63,7 @@ def evaluate_v19_answer(question: Dict[str, Any], user_answer: Any) -> Dict[str,
     }
 
     if qtype == "matching":
-        expected = {}
-        for pair in question.get("pairs") or []:
-            if isinstance(pair, dict) and pair.get("left"):
-                expected[pair.get("left")] = pair.get("right", "")
-
-        result["correct_answer"] = expected
-        ok = bool(expected) and isinstance(user_answer, dict) and all(
-            _norm(user_answer.get(left, "")) == _norm(right) for left, right in expected.items()
-        )
-        result["is_correct"] = ok
-        result["score"] = 1.0 if ok else 0.0
-        result["selected_feedback"] = "Associations correctes." if ok else "Certaines associations ne sont pas correctes."
+        result.update(evaluate_matching_answer(question, user_answer))
         return result
 
     if qtype == "short_answer":
@@ -131,10 +122,7 @@ def _render_question_input(question: Dict[str, Any], idx: int, existing: Any = N
 
     if qtype == "matching":
         pairs = question.get("pairs") or []
-        right_options = []
-        for pair in pairs:
-            if isinstance(pair, dict) and pair.get("right") not in right_options:
-                right_options.append(pair.get("right"))
+        right_options = ordered_matching_options(question, salt=prefix)
 
         current = existing if isinstance(existing, dict) else {}
         answer = {}
@@ -192,6 +180,11 @@ def _finish_and_save(learner: Dict[str, Any], quiz: Dict[str, Any], answers: Dic
 
     for idx, question in enumerate(questions, start=1):
         user_answer = answers.get(str(idx))
+        if question.get("type") == "matching":
+            invalid = matching_answer_error(question, user_answer)
+            if invalid:
+                st.error(f"Question {idx} : {invalid}")
+                return
         evaluation = evaluate_v19_answer(question, user_answer)
 
         if evaluation["is_correct"] is None:

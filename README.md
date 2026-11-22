@@ -51,3 +51,8 @@ Fonctions incluses :
 - génération via mode démo ou Ollama local ;
 - affichage des questions, réponses et explications ;
 - export JSON, CSV et Markdown.
+
+
+## Ateliers interactifs V24 (tests dans V23)
+
+L'application inclut des cartes d'ordonnancement et d'appariement, un aperçu dans l'espace formateur et un import Excel/CSV en lot avec validation. Voir [la notice des ateliers interactifs](docs/ATELIERS_INTERACTIFS_V24.md). La version historique et les données existantes ne sont pas migrées.

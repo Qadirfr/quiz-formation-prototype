@@ -1,0 +1,24 @@
+name: Validate interactive cards V24
+on:
+  push:
+    branches:
+      - feat-interactive-cards-20261122
+      - diagnostic-performance-v23
+  pull_request:
+    branches:
+      - diagnostic-performance-v23
+jobs:
+  interactive-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install test dependencies
+        run: pip install pytest -r requirements.txt
+      - name: Verify syntax of modified modules
+        run: python -m compileall -q app.py interactive_demo_app.py utils/interactive_activities.py utils/interactive_templates.py utils/table_import.py
+      - name: Run V24 regression tests (no database)
+        run: python -m pytest -q tests/test_interactive_activities.py tests/test_interactive_app_wiring.py tests/test_interactive_bulk_templates.py tests/test_interactive_demo_app.py tests/test_interactive_v23_smoke.py

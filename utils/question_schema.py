@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from utils.matching import MatchingValidationError, validate_matching_pairs
+
 import re
 import unicodedata
 from collections import Counter
@@ -401,8 +403,11 @@ def classify_question(question: Dict[str, Any]) -> Dict[str, Any]:
         ):
             issues.append("missing_ordering_correction")
 
-    if detected == "matching" and not pairs:
-        issues.append("missing_matching_pairs")
+    if detected == "matching":
+        try:
+            validate_matching_pairs(pairs)
+        except MatchingValidationError:
+            issues.append("missing_matching_pairs" if not pairs else "invalid_matching_pairs")
 
     if detected in {"single_choice", "true_false"}:
         if not options:
@@ -463,6 +468,7 @@ def audit_action(row: Dict[str, Any]) -> str:
         "unstructured_fill_blank_correction",
         "missing_ordering_correction",
         "missing_matching_pairs",
+        "invalid_matching_pairs",
         "missing_correct_answer",
         "missing_options",
     }

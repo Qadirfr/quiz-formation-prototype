@@ -25,6 +25,12 @@ from utils.database import (
 )
 from utils.backup_export import BackupExportError, create_backup_archive
 from utils.db_runtime import get_setting
+from utils.matching import (
+    evaluate_matching_answer,
+    matching_answer_error,
+    ordered_matching_options,
+    parse_matching_lines,
+)
 from utils.export_utils import quiz_to_csv_bytes, quiz_to_json_bytes, quiz_to_markdown, quiz_to_markdown_bytes
 from utils.file_reader import clean_training_text, read_uploaded_file
 from utils.learner_db import (
@@ -1535,45 +1541,7 @@ def evaluate_answer(question: Dict[str, Any], user_answer: Any) -> Dict[str, Any
         }
 
     if qtype == "matching":
-        pairs = question.get("pairs") or []
-        expected = {p.get("left", ""): p.get("right", "") for p in pairs}
-        given = user_answer if isinstance(user_answer, dict) else {}
-
-        if not expected:
-            return {
-                "score": 0.0,
-                "is_correct": False,
-                "correct_answer": expected,
-                "selected_feedback": "Aucune paire de correction n'a été trouvée.",
-                "correct_feedback": question.get("explanation", ""),
-            }
-
-        correct_count = 0
-        wrong_lines = []
-        for left, right in expected.items():
-            given_right = given.get(left, "")
-            if normalize_answer(given_right) == normalize_answer(right):
-                correct_count += 1
-            else:
-                wrong_lines.append(f"{left} : tu as choisi « {given_right} », la réponse attendue était « {right} ».")
-
-        score = correct_count / len(expected)
-        if wrong_lines:
-            selected_feedback = " ".join(wrong_lines)
-        else:
-            selected_feedback = "Toutes les associations sont correctes."
-
-        correct_feedback = "Correction attendue : " + "; ".join(
-            f"{left} -> {right}" for left, right in expected.items()
-        )
-
-        return {
-            "score": score,
-            "is_correct": score == 1.0,
-            "correct_answer": expected,
-            "selected_feedback": selected_feedback,
-            "correct_feedback": correct_feedback,
-        }
+        return evaluate_matching_answer(question, user_answer)
 
     if qtype == "short_answer":
         match = short_answer_matches(user_answer, question)
@@ -2834,7 +2802,10 @@ def render_test_question(question: Dict[str, Any], index: int) -> Any:
         return ""
 
     if qtype == "matching" and pairs:
-        right_options = [p.get("right", "") for p in pairs]
+        right_options = ordered_matching_options(
+            question,
+            salt=f"{st.session_state.get('active_attempt_id', '')}|{index}",
+        )
         given = {}
         for pair in pairs:
             left = pair.get("left", "")
@@ -3030,7 +3001,7 @@ def render_session_question(question: Dict[str, Any], index: int, session_id: in
         return ""
 
     if qtype == "matching" and pairs:
-        right_options = [p.get("right", "") for p in pairs]
+        right_options = ordered_matching_options(question, salt=prefix)
         given = {}
         for pair in pairs:
             left = pair.get("left", "")
@@ -3909,7 +3880,7 @@ Pour une image, renseigne `media_url`, puis éventuellement `media_caption` et `
                 placeholder="Responsable => Définit les finalités\nSous-traitant => Agit sur instruction",
                 key="manual_matching_pairs",
             )
-            type_payload["pairs"] = _manual_pairs(pair_lines)
+            type_payload["pairs"] = []  # La saisie est validée au clic sur Prévisualiser.
             type_payload["correct_answer"] = "Voir les paires de correction."
 
         elif manual_type == "fill_blank":
@@ -3964,8 +3935,8 @@ Pour une image, renseigne `media_url`, puis éventuellement `media_caption` et `
                     if not type_payload.get("correct_answer"):
                         raise ValueError("Renseigne la bonne réponse.")
 
-                if manual_type == "matching" and not type_payload.get("pairs"):
-                    raise ValueError("Ajoute au moins une association valide.")
+                if manual_type == "matching":
+                    type_payload["pairs"] = parse_matching_lines(pair_lines)
 
                 if manual_type in {
                     "priority_ranking",
@@ -5089,19 +5060,9 @@ Pour une image, renseigne `media_url`, puis éventuellement `media_caption` et `
                         if submitted_green:
                             try:
                                 if "_pairs_text" in green_patch:
-                                    parsed_pairs = []
-                                    for line in str(
+                                    green_patch["pairs"] = parse_matching_lines(
                                         green_patch.pop("_pairs_text") or ""
-                                    ).splitlines():
-                                        if "=>" not in line:
-                                            continue
-                                        left, right = line.split("=>", 1)
-                                        if left.strip() and right.strip():
-                                            parsed_pairs.append({
-                                                "left": left.strip(),
-                                                "right": right.strip(),
-                                            })
-                                    green_patch["pairs"] = parsed_pairs
+                                    )
 
                                 green_result = apply_cdpo_completion_patch(
                                     int(green_item["id"]),
@@ -5516,21 +5477,9 @@ Pour une image, renseigne `media_url`, puis éventuellement `media_caption` et `
                         if submitted_orange:
                             try:
                                 if "_pairs_text" in completion_patch:
-                                    pairs = []
-                                    for line in str(
+                                    completion_patch["pairs"] = parse_matching_lines(
                                         completion_patch.pop("_pairs_text") or ""
-                                    ).splitlines():
-                                        if "=>" not in line:
-                                            continue
-                                        left, right = line.split("=>", 1)
-                                        left = left.strip()
-                                        right = right.strip()
-                                        if left and right:
-                                            pairs.append({
-                                                "left": left,
-                                                "right": right,
-                                            })
-                                    completion_patch["pairs"] = pairs
+                                    )
 
                                 result = apply_cdpo_completion_patch(
                                     int(orange_item["id"]),
@@ -5844,19 +5793,9 @@ Pour une image, renseigne `media_url`, puis éventuellement `media_caption` et `
                         if submitted_red:
                             try:
                                 if "_pairs_text" in red_patch:
-                                    parsed_pairs = []
-                                    for line in str(
+                                    red_patch["pairs"] = parse_matching_lines(
                                         red_patch.pop("_pairs_text") or ""
-                                    ).splitlines():
-                                        if "=>" not in line:
-                                            continue
-                                        left, right = line.split("=>", 1)
-                                        if left.strip() and right.strip():
-                                            parsed_pairs.append({
-                                                "left": left.strip(),
-                                                "right": right.strip(),
-                                            })
-                                    red_patch["pairs"] = parsed_pairs
+                                    )
 
                                 red_result = apply_cdpo_completion_patch(
                                     int(red_item["id"]),
@@ -6476,6 +6415,11 @@ def learner_app() -> None:
                                 )
 
                             if submitted_session_answer:
+                                if current_question.get("type") == "matching":
+                                    invalid = matching_answer_error(current_question, user_answer)
+                                    if invalid:
+                                        st.error(invalid)
+                                        st.stop()
                                 evaluation = evaluate_answer(current_question, user_answer)
                                 save_session_answer(
                                     session_id=session["id"],
@@ -6699,6 +6643,16 @@ def learner_app() -> None:
                 submitted = st.form_submit_button("Valider mes réponses")
 
             if submitted:
+                invalid_matching = [
+                    f"Question {i} : {matching_answer_error(question, answers.get(i))}"
+                    for i, question in enumerate(questions, start=1)
+                    if question.get("type") == "matching"
+                    and matching_answer_error(question, answers.get(i))
+                ]
+                if invalid_matching:
+                    for message in invalid_matching:
+                        st.error(message)
+                    st.stop()
                 total_score = 0.0
                 max_score = 0.0
                 manual_count = 0

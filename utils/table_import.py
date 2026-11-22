@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from utils.matching import MatchingValidationError, validate_matching_pairs
+
 import csv
 import io
 import json
@@ -758,8 +760,10 @@ def validate_imported_quiz(quiz: Dict[str, Any]) -> Dict[str, Any]:
                 q_errors.append("Vrai/Faux : bonne reponse manquante.")
 
         elif qtype == "matching":
-            if not pairs:
-                q_errors.append("Appariement : paires manquantes.")
+            try:
+                validate_matching_pairs(pairs)
+            except MatchingValidationError as exc:
+                q_errors.append(f"Appariement : {exc}")
 
         elif qtype == "ordering":
             if not items and not options:

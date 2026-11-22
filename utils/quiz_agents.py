@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from utils.matching import MatchingValidationError, validate_matching_pairs
+
 import json
 import re
 from dataclasses import dataclass
@@ -385,6 +387,11 @@ def evaluate_question_quality(question: Dict[str, Any]) -> tuple[int, str]:
             notes.append("Reponse correcte absente.")
     elif qtype == "matching":
         pairs = question.get("pairs") or []
+        try:
+            validate_matching_pairs(pairs)
+        except MatchingValidationError as exc:
+            score -= 35
+            notes.append(f"Appariement à corriger : {exc}")
         if len(pairs) < 3:
             score -= 25
             notes.append("Rapprochement avec moins de 3 paires.")

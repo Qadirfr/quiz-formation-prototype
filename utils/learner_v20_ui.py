@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional
 import streamlit as st
 
 from utils.autonomous_v19 import evaluate_v19_answer
+from utils.matching import matching_answer_error, ordered_matching_options
 from utils.db_runtime import get_connection, get_database_mode
 from utils.learner_db import (
     finish_attempt,
@@ -58,10 +59,7 @@ def _render_question_input(question: Dict[str, Any], key_prefix: str, existing: 
 
     if qtype == "matching":
         pairs = question.get("pairs") or []
-        right_options = []
-        for pair in pairs:
-            if isinstance(pair, dict) and pair.get("right") not in right_options:
-                right_options.append(pair.get("right"))
+        right_options = ordered_matching_options(question, salt=key_prefix)
         current = existing if isinstance(existing, dict) else {}
         answer = {}
         for pair in pairs:
@@ -129,6 +127,13 @@ def _finish_bank_quiz(prefix: str, learner: Dict[str, Any]) -> None:
     quiz = st.session_state.get(f"{prefix}_quiz") or {}
     answers = st.session_state.get(f"{prefix}_answers") or {}
     questions = quiz.get("questions", []) or []
+
+    for idx, question in enumerate(questions, start=1):
+        if question.get("type") == "matching":
+            invalid = matching_answer_error(question, answers.get(str(idx)))
+            if invalid:
+                st.error(f"Question {idx} : {invalid}")
+                return
 
     attempt_id = start_attempt(
         learner_id=int(learner["id"]),
@@ -390,6 +395,11 @@ def render_session_autonomous_tab(learner: Dict[str, Any]) -> None:
     cols = st.columns(3)
     with cols[0]:
         if st.button("Enregistrer la réponse", type="primary", width="stretch", key=f"{prefix}_save"):
+            if question.get("type") == "matching":
+                invalid = matching_answer_error(question, answer)
+                if invalid:
+                    st.error(invalid)
+                    st.stop()
             evaluation = evaluate_v19_answer(question, answer)
             save_session_answer(
                 session_id=session["id"],
@@ -459,6 +469,11 @@ def render_live_session_tab(learner: Dict[str, Any]) -> None:
 
     answer = _render_question_input(question, f"{prefix}_{question_number}")
     if st.button("Valider ma réponse", type="primary", width="stretch", key=f"{prefix}_submit"):
+        if question.get("type") == "matching":
+            invalid = matching_answer_error(question, answer)
+            if invalid:
+                st.error(invalid)
+                st.stop()
         evaluation = evaluate_v19_answer(question, answer)
         save_session_answer(
             session_id=session["id"],

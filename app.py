@@ -2802,7 +2802,10 @@ def render_test_question(question: Dict[str, Any], index: int) -> Any:
         return ""
 
     if qtype == "matching" and pairs:
-        right_options = ordered_matching_options(question, salt=str(index))
+        right_options = ordered_matching_options(
+            question,
+            salt=f"{st.session_state.get('active_attempt_id', '')}|{index}",
+        )
         given = {}
         for pair in pairs:
             left = pair.get("left", "")

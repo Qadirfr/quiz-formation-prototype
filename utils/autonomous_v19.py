@@ -167,6 +167,13 @@ def _clear_v19_state() -> None:
 def _finish_and_save(learner: Dict[str, Any], quiz: Dict[str, Any], answers: Dict[str, Any]) -> None:
     questions = quiz.get("questions", []) or []
 
+    for idx, question in enumerate(questions, start=1):
+        if question.get("type") == "matching":
+            invalid = matching_answer_error(question, answers.get(str(idx)))
+            if invalid:
+                st.error(f"Question {idx} : {invalid}")
+                return
+
     attempt_id = start_attempt(
         learner_id=int(learner["id"]),
         quiz_id=None,
@@ -180,11 +187,6 @@ def _finish_and_save(learner: Dict[str, Any], quiz: Dict[str, Any], answers: Dic
 
     for idx, question in enumerate(questions, start=1):
         user_answer = answers.get(str(idx))
-        if question.get("type") == "matching":
-            invalid = matching_answer_error(question, user_answer)
-            if invalid:
-                st.error(f"Question {idx} : {invalid}")
-                return
         evaluation = evaluate_v19_answer(question, user_answer)
 
         if evaluation["is_correct"] is None:

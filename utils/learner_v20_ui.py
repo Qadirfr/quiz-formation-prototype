@@ -128,6 +128,13 @@ def _finish_bank_quiz(prefix: str, learner: Dict[str, Any]) -> None:
     answers = st.session_state.get(f"{prefix}_answers") or {}
     questions = quiz.get("questions", []) or []
 
+    for idx, question in enumerate(questions, start=1):
+        if question.get("type") == "matching":
+            invalid = matching_answer_error(question, answers.get(str(idx)))
+            if invalid:
+                st.error(f"Question {idx} : {invalid}")
+                return
+
     attempt_id = start_attempt(
         learner_id=int(learner["id"]),
         quiz_id=None,
@@ -141,11 +148,6 @@ def _finish_bank_quiz(prefix: str, learner: Dict[str, Any]) -> None:
 
     for idx, question in enumerate(questions, start=1):
         user_answer = answers.get(str(idx))
-        if question.get("type") == "matching":
-            invalid = matching_answer_error(question, user_answer)
-            if invalid:
-                st.error(f"Question {idx} : {invalid}")
-                return
         evaluation = evaluate_v19_answer(question, user_answer)
 
         if evaluation["is_correct"] is None:

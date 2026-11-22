@@ -551,7 +551,33 @@ def _v23_1_init_databases_once():
     init_session_db()
     return True
 
-_v23_1_init_databases_once()
+
+try:
+    _v23_1_init_databases_once()
+except Exception as startup_error:
+    # Show a safe, actionable message only for PostgreSQL connectivity failures.
+    # Other programming and schema errors must still surface in the Cloud logs.
+    from psycopg import OperationalError
+    from psycopg_pool import PoolTimeout
+
+    if not isinstance(startup_error, (OperationalError, PoolTimeout)):
+        raise
+
+    st.error("Connexion à la base de données indisponible.")
+    st.write(
+        "Quiz Formation ne peut pas charger les quiz et résultats pour le moment. "
+        "L'accès aux espaces formateur et apprenant est suspendu tant que "
+        "la connexion PostgreSQL n'est pas rétablie."
+    )
+    st.info(
+        "Administrateur : ouvrez « Manage app » puis les journaux Streamlit. "
+        "Vérifiez l'état de la base PostgreSQL, ainsi que APP_DATABASE_MODE "
+        "et DATABASE_URL dans les secrets de l'application."
+    )
+    st.caption(
+        "Aucun basculement automatique vers une base SQLite locale n'est effectué."
+    )
+    st.stop()
 
 LEARNER_ACCESS_CODE = get_setting("QUIZ_LEARNER_CODE", "CIVIQUE2026")
 TRAINER_PASSWORD = get_setting("QUIZ_TRAINER_PASSWORD", "") or ""

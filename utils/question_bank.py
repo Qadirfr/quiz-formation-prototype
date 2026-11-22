@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from utils.matching import validate_matching_pairs
+
 import hashlib
 import json
 import random
@@ -1889,20 +1891,7 @@ def _normalize_completion_patch(
         ]
 
     elif target_type == "matching":
-        pairs = cleaned.get("pairs") or []
-        if not isinstance(pairs, list) or not pairs:
-            raise ValueError("Renseigne au moins une paire d'appariement.")
-        normalized_pairs = []
-        for pair in pairs:
-            if not isinstance(pair, dict):
-                continue
-            left = str(pair.get("left") or "").strip()
-            right = str(pair.get("right") or "").strip()
-            if left and right:
-                normalized_pairs.append({"left": left, "right": right})
-        if not normalized_pairs:
-            raise ValueError("Les paires d'appariement sont incomplètes.")
-        cleaned["pairs"] = normalized_pairs
+        cleaned["pairs"] = validate_matching_pairs(cleaned.get("pairs") or [])
 
     elif target_type == "short_answer":
         accepted = cleaned.get("accepted_answers") or []

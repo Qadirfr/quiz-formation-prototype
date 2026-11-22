@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import os
 import math
 import json
-import os
 import re
 import time
 import unicodedata
@@ -24,6 +24,17 @@ from utils.database import (
     load_quiz,
     save_quiz,
 )
+from utils.interactive_templates import (
+    example_rows as interactive_example_rows,
+    interactive_csv_bytes,
+    interactive_xlsx_bytes,
+)
+from utils.interactive_activities import (
+    can_render_matching,
+    can_render_ordering,
+    render_matching_cards,
+    render_ordering_cards,
+)
 from utils.export_utils import quiz_to_csv_bytes, quiz_to_json_bytes, quiz_to_markdown, quiz_to_markdown_bytes
 from utils.file_reader import clean_training_text, read_uploaded_file
 from utils.learner_db import (
@@ -40,6 +51,7 @@ from utils.learner_db import (
 from utils.quiz_agents import QuizConfig, analyze_training_content, orchestrate_quiz_generation
 from utils.table_import import (
     read_quiz_table,
+    rows_to_quiz,
     template_csv_bytes,
     template_json_bytes,
     validate_imported_quiz,
@@ -2619,7 +2631,68 @@ def render_creator_question(question: Dict[str, Any], index: int) -> None:
             st.caption(f"Extrait source : {question.get('source_excerpt')}")
 
 
-def render_test_question(question: Dict[str, Any], index: int) -> Any:
+def has_interactive_card_activity(question: Dict[str, Any]) -> bool:
+    """Only card activities require a live Streamlit container, not a form."""
+    if is_ordering_question(question):
+        return can_render_ordering(extract_ordering_items(question))
+    if question.get("type") == "matching":
+        return can_render_matching(question.get("pairs") or [])
+    return False
+
+
+def render_interactive_preview(question: Dict[str, Any], preview_key: str) -> None:
+    """Trainer-only passation preview without any writes to the question bank."""
+    st.caption(
+        f"Formation : {question.get('training_scope') or '-'} · "
+        f"Domaine : {question.get('domain') or '-'} · "
+        f"Sous-domaine : {question.get('subdomain') or '-'}"
+    )
+    render_question_context_and_media(question)
+    if is_ordering_question(question):
+        st.markdown(ordering_prompt_text(question))
+        items = extract_ordering_items(question)
+        answer = render_ordering_cards(items, f"{preview_key}_cards")
+        is_complete = len(answer) == len(items)
+    elif question.get("type") == "matching":
+        st.markdown(question.get("question") or "")
+        pairs = question.get("pairs") or []
+        answer = render_matching_cards(pairs, f"{preview_key}_cards")
+        is_complete = len(answer) == len(pairs)
+    else:
+        st.info("Cette question n'utilise pas encore les cartes interactives.")
+        return
+
+    st.caption("Aucune réponse de cet aperçu n'est enregistrée dans la base.")
+    if st.button(
+        "Voir la correction de cet essai",
+        key=f"{preview_key}_validate",
+        disabled=not is_complete,
+        type="primary",
+    ):
+        st.session_state[f"{preview_key}_result"] = {
+            "answer": answer,
+            "evaluation": evaluate_answer(question, answer),
+        }
+
+    prior = st.session_state.get(f"{preview_key}_result")
+    if prior and prior.get("answer") == answer:
+        result = prior["evaluation"]
+        score = round(float(result.get("score") or 0) * 100)
+        if result.get("is_correct"):
+            st.success(f"Réponse correcte · {score} %")
+        else:
+            st.warning(f"Résultat de l'essai : {score} % des éléments corrects")
+        if result.get("selected_feedback"):
+            st.write(result["selected_feedback"])
+        if result.get("correct_feedback"):
+            st.info(result["correct_feedback"])
+        if question.get("remediation"):
+            st.caption(f"Piste de révision : {question['remediation']}")
+
+
+def render_test_question(
+    question: Dict[str, Any], index: int, attempt_id: Optional[int] = None
+) -> Any:
     qtype = question.get("type", "")
     st.markdown(f"### Question {index}")
     render_question_context_and_media(question)
@@ -2789,6 +2862,11 @@ def render_test_question(question: Dict[str, Any], index: int) -> Any:
                 key=f"ordering_fallback_{index}",
             )
 
+        if can_render_ordering(items):
+            return render_ordering_cards(
+                items, f"attempt_{attempt_id or 'preview'}_question_{index}_ordering_cards"
+            )
+
         labels = [str(item.get("label") or "").upper() for item in items]
         display = {
             str(item.get("label") or "").upper():
@@ -2822,6 +2900,10 @@ def render_test_question(question: Dict[str, Any], index: int) -> Any:
         return ""
 
     if qtype == "matching" and pairs:
+        if can_render_matching(pairs):
+            return render_matching_cards(
+                pairs, f"attempt_{attempt_id or 'preview'}_question_{index}_matching_cards"
+            )
         right_options = [p.get("right", "") for p in pairs]
         given = {}
         for pair in pairs:
@@ -2839,7 +2921,12 @@ def render_test_question(question: Dict[str, Any], index: int) -> Any:
     return st.text_input("Ta réponse", key=f"generic_answer_{index}")
 
 
-def render_session_question(question: Dict[str, Any], index: int, session_id: int) -> Any:
+def render_session_question(
+    question: Dict[str, Any],
+    index: int,
+    session_id: int,
+    participant_id: Optional[int] = None,
+) -> Any:
     qtype = question.get("type", "")
     st.markdown(f"### Question {index}")
     render_question_context_and_media(question)
@@ -2989,6 +3076,11 @@ def render_session_question(question: Dict[str, Any], index: int, session_id: in
                 "Ton ordre (exemple : ABCDE)",
                 key=f"{prefix}_ordering_fallback",
             )
+        if can_render_ordering(items):
+            return render_ordering_cards(
+                items,
+                f"session_{session_id}_participant_{participant_id or 'unknown'}_question_{index}_ordering_cards",
+            )
         labels = [str(item.get("label") or "").upper() for item in items]
         display = {
             str(item.get("label") or "").upper():
@@ -3018,6 +3110,11 @@ def render_session_question(question: Dict[str, Any], index: int, session_id: in
         return ""
 
     if qtype == "matching" and pairs:
+        if can_render_matching(pairs):
+            return render_matching_cards(
+                pairs,
+                f"session_{session_id}_participant_{participant_id or 'unknown'}_question_{index}_matching_cards",
+            )
         right_options = [p.get("right", "") for p in pairs]
         given = {}
         for pair in pairs:
@@ -3168,6 +3265,33 @@ def trainer_app() -> None:
         st.subheader("Importer ou coller un support de formation")
 
         with st.expander(
+            "V24 — Essayer les ateliers interactifs en vue apprenti (sans enregistrer)",
+            expanded=False,
+        ):
+            st.write(
+                "Teste un exercice avec les cartes avant de l'importer dans la banque. "
+                "Cet aperçu ne crée ni quiz ni résultats apprenants."
+            )
+            demo_quiz = rows_to_quiz(
+                interactive_example_rows(), filename="ateliers_v24_exemples.xlsx"
+            )
+            demo_questions = demo_quiz.get("questions") or []
+            demo_index = st.selectbox(
+                "Choisir un exercice",
+                options=list(range(len(demo_questions))),
+                format_func=lambda i, questions=demo_questions: (
+                    f"{i + 1}. {questions[i].get('type')} — "
+                    f"{questions[i].get('domain')} : "
+                    f"{questions[i].get('question')}"
+                ),
+                key="trainer_interactive_demo_choice",
+            )
+            demo_question = demo_questions[demo_index]
+            render_interactive_preview(
+                demo_question, f"trainer_interactive_demo_{demo_index}"
+            )
+
+        with st.expander(
             "Import industriel — CSV / Excel / JSON",
             expanded=True,
         ):
@@ -3243,6 +3367,36 @@ Pour une image, renseigne `media_url`, puis éventuellement `media_caption` et `
                     hide_index=True,
                 )
 
+            st.markdown("#### Modèles simplifiés — cartes interactives V24")
+            st.caption(
+                "Une ligne = une question. Remplis domain, subdomain, type, question, "
+                "item_1... et correct_order pour un classement, ou pair_1_left/right... "
+                "pour un appariement. Conserve les noms des colonnes."
+            )
+            int1, int2 = st.columns(2)
+            with int1:
+                st.download_button(
+                    "Télécharger le modèle Excel V24",
+                    data=interactive_xlsx_bytes(),
+                    file_name="modele_ateliers_interactifs_V24.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key="download_interactive_xlsx",
+                    width="stretch",
+                )
+            with int2:
+                st.download_button(
+                    "Télécharger le modèle CSV V24",
+                    data=interactive_csv_bytes(),
+                    file_name="modele_ateliers_interactifs_V24.csv",
+                    mime="text/csv",
+                    key="download_interactive_csv",
+                    width="stretch",
+                )
+            st.caption(
+                "Les modèles contiennent six exemples. Remplace-les ou ajoute autant "
+                "de lignes que nécessaire. Le même import industriel V23 est utilisé."
+            )
+
             tpl1, tpl2 = st.columns(2)
             with tpl1:
                 st.download_button(
@@ -3270,6 +3424,10 @@ Pour une image, renseigne `media_url`, puis éventuellement `media_caption` et `
                 type=["csv", "xlsx", "json"],
                 key="structured_quiz_file",
             )
+            uploaded_fingerprint = (
+                hashlib.sha256(structured_file.getvalue()).hexdigest()
+                if structured_file is not None else None
+            )
 
             if st.button(
                 "Analyser le fichier",
@@ -3284,13 +3442,25 @@ Pour une image, renseigne `media_url`, puis éventuellement `media_caption` et `
                         import_report = validate_imported_quiz(imported_quiz)
                         st.session_state.industrial_import_quiz = imported_quiz
                         st.session_state.industrial_import_report = import_report
+                        st.session_state.industrial_import_fingerprint = uploaded_fingerprint
                     except Exception as exc:
                         st.session_state.industrial_import_quiz = None
                         st.session_state.industrial_import_report = None
+                        st.session_state.industrial_import_fingerprint = None
                         st.error(f"Import impossible : {exc}")
 
-            imported_quiz = st.session_state.get("industrial_import_quiz")
-            import_report = st.session_state.get("industrial_import_report")
+            import_is_current = (
+                uploaded_fingerprint is not None
+                and uploaded_fingerprint == st.session_state.get(
+                    "industrial_import_fingerprint"
+                )
+            )
+            imported_quiz = (
+                st.session_state.get("industrial_import_quiz") if import_is_current else None
+            )
+            import_report = (
+                st.session_state.get("industrial_import_report") if import_is_current else None
+            )
 
             if imported_quiz and import_report:
                 m1, m2, m3 = st.columns(3)
@@ -3340,6 +3510,33 @@ Pour une image, renseigne `media_url`, puis éventuellement `media_caption` et `
                         )
 
                 if import_report.get("valid"):
+                    interactive_candidates = [
+                        (i, question)
+                        for i, question in enumerate(imported_quiz.get("questions") or [])
+                        if has_interactive_card_activity(question)
+                    ]
+                    if interactive_candidates:
+                        st.markdown("#### Prévisualiser un atelier importé — sans enregistrer")
+                        candidate_indices = [i for i, _ in interactive_candidates]
+                        preview_index = st.selectbox(
+                            "Question à tester comme apprenti",
+                            options=candidate_indices,
+                            format_func=lambda i, questions=imported_quiz["questions"]: (
+                                f"Q{i + 1} — {questions[i].get('type')} — "
+                                f"{questions[i].get('question')}"
+                            ),
+                            key="import_interactive_preview_index",
+                        )
+                        question = imported_quiz["questions"][preview_index]
+                        preview_hash = hashlib.sha256(
+                            json.dumps(
+                                question, ensure_ascii=False, sort_keys=True, default=str
+                            ).encode("utf-8")
+                        ).hexdigest()[:12]
+                        render_interactive_preview(
+                            question, f"import_cards_{preview_index}_{preview_hash}"
+                        )
+
                     act1, act2 = st.columns(2)
                     with act1:
                         if st.button(
@@ -3769,6 +3966,11 @@ Pour une image, renseigne `media_url`, puis éventuellement `media_caption` et `
                 )
 
             elif manual_type == "ordering":
+                st.caption(
+                    "En mode apprenant, les éléments apparaissent sous forme de cartes "
+                    "à classer, déplacer ou retirer. L'ordre attendu doit citer "
+                    "chaque lettre exactement une fois."
+                )
                 type_payload["correct_order"] = list(
                     "".join(
                         ch
@@ -3805,6 +4007,11 @@ Pour une image, renseigne `media_url`, puis éventuellement `media_caption` et `
                     )
 
         elif manual_type == "matching":
+            st.caption(
+                "En mode apprenant, les associations se construisent en sélectionnant "
+                "deux cartes successives. Prévois au moins deux paires et des termes "
+                "distincts dans la colonne de gauche."
+            )
             pair_lines = st.text_area(
                 "Associations — une ligne par paire, format gauche => droite",
                 height=180,
@@ -3866,8 +4073,12 @@ Pour une image, renseigne `media_url`, puis éventuellement `media_caption` et `
                     if not type_payload.get("correct_answer"):
                         raise ValueError("Renseigne la bonne réponse.")
 
-                if manual_type == "matching" and not type_payload.get("pairs"):
-                    raise ValueError("Ajoute au moins une association valide.")
+                if manual_type == "matching":
+                    if not can_render_matching(type_payload.get("pairs") or []):
+                        raise ValueError(
+                            "Ajoute au moins deux paires complètes et utilise "
+                            "des termes distincts dans la colonne de gauche."
+                        )
 
                 if manual_type in {
                     "priority_ranking",
@@ -3877,8 +4088,22 @@ Pour une image, renseigne `media_url`, puis éventuellement `media_caption` et `
                 } and not type_payload.get("items"):
                     raise ValueError("Ajoute au moins un élément structuré.")
 
-                if manual_type == "ordering" and not type_payload.get("correct_order"):
-                    raise ValueError("Renseigne l'ordre attendu.")
+                if manual_type == "ordering":
+                    item_labels = [
+                        str(item.get("label") or "").upper()
+                        for item in type_payload.get("items") or []
+                    ]
+                    expected_labels = type_payload.get("correct_order") or []
+                    if (
+                        not can_render_ordering(type_payload.get("items") or [])
+                        or len(expected_labels) != len(item_labels)
+                        or len(set(expected_labels)) != len(item_labels)
+                        or set(expected_labels) != set(item_labels)
+                    ):
+                        raise ValueError(
+                            "L'ordre attendu doit contenir chaque lettre une "
+                            "seule fois et couvrir tous les éléments."
+                        )
 
                 if manual_type == "fill_blank":
                     blanks = len(
@@ -6358,17 +6583,28 @@ def learner_app() -> None:
                             else:
                                 st.info("Correction masquée pour le moment.")
                         else:
-                            with st.form(
-                                f"session_question_form_{session['id']}_{current_question_number}"
+                            interactive_session = has_interactive_card_activity(current_question)
+                            with (
+                                st.container()
+                                if interactive_session
+                                else st.form(
+                                    f"session_question_form_{session['id']}_{current_question_number}"
+                                )
                             ):
                                 user_answer = render_session_question(
                                     current_question,
                                     current_question_number,
                                     session["id"],
+                                    active_participant_id,
                                 )
-                                submitted_session_answer = st.form_submit_button(
-                                    "Valider ma réponse"
-                                )
+                                if interactive_session:
+                                    submitted_session_answer = st.button(
+                                        "Valider ma réponse", type="primary"
+                                    )
+                                else:
+                                    submitted_session_answer = st.form_submit_button(
+                                        "Valider ma réponse"
+                                    )
 
                             if submitted_session_answer:
                                 evaluation = evaluate_answer(current_question, user_answer)
@@ -6585,13 +6821,19 @@ def learner_app() -> None:
             st.markdown(f"## Quiz en cours : {active_quiz.get('quiz_title', 'Quiz')}")
             questions = active_quiz.get("questions", [])
 
-            with st.form("take_quiz_form"):
+            interactive_quiz = any(
+                has_interactive_card_activity(question) for question in questions
+            )
+            with (st.container() if interactive_quiz else st.form("take_quiz_form")):
                 answers = {}
                 for i, question in enumerate(questions, start=1):
-                    answers[i] = render_test_question(question, i)
+                    answers[i] = render_test_question(question, i, attempt_id=attempt_id)
                     st.markdown("---")
 
-                submitted = st.form_submit_button("Valider mes réponses")
+                if interactive_quiz:
+                    submitted = st.button("Valider mes réponses", type="primary")
+                else:
+                    submitted = st.form_submit_button("Valider mes réponses")
 
             if submitted:
                 total_score = 0.0

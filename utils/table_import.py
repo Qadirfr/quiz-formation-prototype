@@ -133,7 +133,9 @@ def read_xlsx_rows(uploaded_file) -> List[Dict[str, Any]]:
 
     uploaded_file.seek(0)
     wb = load_workbook(uploaded_file, data_only=True)
-    ws = wb.active
+    # The interactive Excel model contains a separate user guide.
+    # Do not import the guide if the author last saved that sheet as active.
+    ws = wb["Questions"] if "Questions" in wb.sheetnames else wb.active
 
     values = list(ws.iter_rows(values_only=True))
     if not values:
@@ -758,20 +760,52 @@ def validate_imported_quiz(quiz: Dict[str, Any]) -> Dict[str, Any]:
                 q_errors.append("Vrai/Faux : bonne reponse manquante.")
 
         elif qtype == "matching":
-            if not pairs:
-                q_errors.append("Appariement : paires manquantes.")
+            if len(pairs) < 2:
+                q_errors.append("Appariement : au moins deux paires sont requises.")
+            left_terms = [clean_cell(p.get("left")) for p in pairs]
+            right_terms = [clean_cell(p.get("right")) for p in pairs]
+            if not all(left_terms) or not all(right_terms):
+                q_errors.append("Appariement : chaque paire doit avoir un terme a gauche et a droite.")
+            if len({term.casefold() for term in left_terms}) != len(left_terms):
+                q_errors.append("Appariement : les termes de gauche doivent etre distincts.")
+            if len({term.casefold() for term in right_terms}) != len(right_terms):
+                q_errors.append("Appariement : les termes de droite doivent etre distincts.")
 
         elif qtype == "ordering":
             if not items and not options:
                 q_errors.append("Ordonnancement : elements a classer manquants.")
-            if not (
-                question.get("correct_order")
-                or question.get("expected_order")
-                or question.get("correct_answer")
-            ):
-                q_warnings.append(
-                    "Ordonnancement : ordre attendu absent, correction differee probable."
-                )
+            else:
+                parsed_items = items if items else [
+                    {"label": chr(65 + i), "text": str(value)}
+                    for i, value in enumerate(options)
+                ]
+                labels = [
+                    clean_cell(item.get("label") if isinstance(item, dict) else chr(65 + i)).upper()
+                    for i, item in enumerate(parsed_items)
+                ]
+                descriptions = [
+                    clean_cell(item.get("text") if isinstance(item, dict) else item)
+                    for item in parsed_items
+                ]
+                if len(labels) < 2 or not all(descriptions):
+                    q_errors.append("Ordonnancement : au moins deux elements completes sont requis.")
+                if not all(labels) or len(set(labels)) != len(labels):
+                    q_errors.append("Ordonnancement : lettres de cartes manquantes ou repetees.")
+                raw_expected = question.get("correct_order") or question.get("expected_order")
+                if raw_expected:
+                    expected = (
+                        [clean_cell(x).upper() for x in raw_expected]
+                        if isinstance(raw_expected, list)
+                        else [c for c in str(raw_expected).upper() if c.isalpha()]
+                    )
+                    if len(expected) != len(labels) or set(expected) != set(labels):
+                        q_errors.append(
+                            "Ordonnancement : correct_order doit contenir chaque lettre une seule fois."
+                        )
+                elif not question.get("correct_answer"):
+                    q_warnings.append(
+                        "Ordonnancement : ordre attendu absent, correction differee probable."
+                    )
 
         elif qtype == "fill_blank":
             blanks = len(re.findall(r"\[\s*(?:\.\.\.|…+)\s*\]", text))

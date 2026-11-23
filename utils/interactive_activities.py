@@ -83,17 +83,24 @@ def matching_answer(pairs: list[dict[str, Any]], matches: Any) -> dict[str, str]
     }
 
 
-def render_ordering_cards(items: list[dict[str, Any]], state_key: str) -> list[str]:
-    """Build an order by picking cards, then moving/removing them before submission."""
+def render_ordering_cards(
+    items: list[dict[str, Any]],
+    state_key: str,
+    *,
+    max_cards: int | None = None,
+    caption: str | None = None,
+) -> list[str]:
+    """Build and reorder a complete sequence or a Top N of unique cards."""
     import streamlit as st
 
     labels = [str(item["label"]).upper() for item in items]
     descriptions = {str(item["label"]).upper(): str(item.get("text") or "") for item in items}
-    selected = clean_sequence(st.session_state.get(state_key), labels)
+    target = max(1, min(int(max_cards), len(items))) if max_cards is not None else len(items)
+    selected = clean_sequence(st.session_state.get(state_key), labels)[:target]
     st.session_state[state_key] = selected
 
-    st.caption("Défi chronologique : sélectionne les cartes, puis ajuste l'ordre avec les flèches.")
-    st.progress(len(selected) / len(labels), text=f"{len(selected)} / {len(labels)} cartes placées")
+    st.caption(caption or "Défi chronologique : sélectionne les cartes, puis ajuste l'ordre avec les flèches.")
+    st.progress(len(selected) / target, text=f"{len(selected)} / {target} cartes placées")
     if selected:
         st.markdown("**Ton classement**")
         for position, label in enumerate(selected):
@@ -109,7 +116,10 @@ def render_ordering_cards(items: list[dict[str, Any]], state_key: str) -> list[s
                 st.session_state[state_key] = [value for value in selected if value != label]
                 st.rerun()
 
-    remaining = [index for index in shuffled_indexes(len(items), state_key) if labels[index] not in selected]
+    remaining = [
+        index for index in shuffled_indexes(len(items), state_key)
+        if labels[index] not in selected
+    ] if len(selected) < target else []
     if remaining:
         st.markdown("**Cartes à placer**")
         cols = st.columns(2)

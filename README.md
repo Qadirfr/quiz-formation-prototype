@@ -53,6 +53,6 @@ Fonctions incluses :
 - export JSON, CSV et Markdown.
 
 
-## Ateliers interactifs V24 (tests dans V23)
+## Ateliers interactifs — lots 1 et 2 (tests dans V23)
 
-L'application inclut des cartes d'ordonnancement et d'appariement, un aperçu dans l'espace formateur et un import Excel/CSV en lot avec validation. Voir [la notice des ateliers interactifs](docs/ATELIERS_INTERACTIFS_V24.md). La version historique et les données existantes ne sont pas migrées.
+L'application inclut les cartes d'ordonnancement et d'appariement (lot 1), ainsi que le classement des priorités par cartes, les textes à trous avec étiquettes et les curseurs de répartition de points (lot 2). L'aperçu dans l'espace formateur et l'import Excel/CSV des cinq formats réutilisent la banque actuelle. Les classements et budgets restent soumis à une correction différée. Voir [la notice des ateliers interactifs](docs/ATELIERS_INTERACTIFS_V24.md). La version historique et les données existantes ne sont pas migrées.

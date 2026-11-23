@@ -35,6 +35,15 @@ from utils.interactive_activities import (
     render_matching_cards,
     render_ordering_cards,
 )
+from utils.interactive_lot2 import (
+    can_render_word_bank,
+    is_complete_decision,
+    parse_word_bank,
+    render_point_budget,
+    render_priority_cards,
+    render_word_bank_tokens,
+    usable_word_bank,
+)
 from utils.export_utils import quiz_to_csv_bytes, quiz_to_json_bytes, quiz_to_markdown, quiz_to_markdown_bytes
 from utils.file_reader import clean_training_text, read_uploaded_file
 from utils.learner_db import (
@@ -2577,6 +2586,11 @@ def render_creator_question(question: Dict[str, Any], index: int) -> None:
             count = fill_blank_count(question)
             st.markdown(fill_blank_prompt_text(question))
             st.caption(f"{count} champ(s) à compléter.")
+            if question.get("word_bank"):
+                st.caption(
+                    "Étiquettes : "
+                    + " · ".join(parse_word_bank(question.get("word_bank")))
+                )
             expected = get_fill_blank_expected(question, count)
             if expected and len(expected) == count:
                 st.success(
@@ -2632,7 +2646,16 @@ def render_creator_question(question: Dict[str, Any], index: int) -> None:
 
 
 def has_interactive_card_activity(question: Dict[str, Any]) -> bool:
-    """Only card activities require a live Streamlit container, not a form."""
+    """Question widgets requiring immediate reruns cannot be nested in st.form."""
+    if is_priority_ranking_question(question):
+        return can_render_ordering(extract_activity_items(question))
+    if is_point_allocation_question(question):
+        return (
+            can_render_ordering(extract_activity_items(question))
+            and int(question.get("total_points") or 0) > 0
+        )
+    if is_fill_blank_question(question):
+        return can_render_word_bank(question, fill_blank_count(question))
     if is_ordering_question(question):
         return can_render_ordering(extract_ordering_items(question))
     if question.get("type") == "matching":
@@ -2648,7 +2671,29 @@ def render_interactive_preview(question: Dict[str, Any], preview_key: str) -> No
         f"Sous-domaine : {question.get('subdomain') or '-'}"
     )
     render_question_context_and_media(question)
-    if is_ordering_question(question):
+    if is_priority_ranking_question(question):
+        st.markdown(structured_activity_prompt_text(question))
+        answer = render_priority_cards(
+            question, extract_activity_items(question), f"{preview_key}_priority"
+        )
+        is_complete = is_complete_decision(question, answer)
+    elif is_point_allocation_question(question):
+        st.markdown(structured_activity_prompt_text(question))
+        answer = render_point_budget(
+            question, extract_activity_items(question), f"{preview_key}_budget"
+        )
+        is_complete = is_complete_decision(question, answer)
+    elif is_fill_blank_question(question) and can_render_word_bank(
+        question, fill_blank_count(question)
+    ):
+        st.markdown(fill_blank_prompt_text(question))
+        answer = render_word_bank_tokens(
+            parse_word_bank(question.get("word_bank")),
+            fill_blank_count(question),
+            f"{preview_key}_words",
+        )
+        is_complete = is_complete_decision(question, answer)
+    elif is_ordering_question(question):
         st.markdown(ordering_prompt_text(question))
         items = extract_ordering_items(question)
         answer = render_ordering_cards(items, f"{preview_key}_cards")
@@ -2659,7 +2704,7 @@ def render_interactive_preview(question: Dict[str, Any], preview_key: str) -> No
         answer = render_matching_cards(pairs, f"{preview_key}_cards")
         is_complete = len(answer) == len(pairs)
     else:
-        st.info("Cette question n'utilise pas encore les cartes interactives.")
+        st.info("Cette question n'a pas encore de prévisualisation interactive.")
         return
 
     st.caption("Aucune réponse de cet aperçu n'est enregistrée dans la base.")
@@ -2678,10 +2723,12 @@ def render_interactive_preview(question: Dict[str, Any], preview_key: str) -> No
     if prior and prior.get("answer") == answer:
         result = prior["evaluation"]
         score = round(float(result.get("score") or 0) * 100)
-        if result.get("is_correct"):
+        if result.get("is_correct") is True:
             st.success(f"Réponse correcte · {score} %")
-        else:
+        elif result.get("is_correct") is False:
             st.warning(f"Résultat de l'essai : {score} % des éléments corrects")
+        else:
+            st.info("Arbitrage enregistré pour cet essai : correction pédagogique différée.")
         if result.get("selected_feedback"):
             st.write(result["selected_feedback"])
         if result.get("correct_feedback"):
@@ -2709,6 +2756,31 @@ def render_test_question(
 
     options = question.get("options") or []
     pairs = question.get("pairs") or []
+
+    if is_priority_ranking_question(question) and can_render_ordering(
+        extract_activity_items(question)
+    ):
+        return render_priority_cards(
+            question,
+            extract_activity_items(question),
+            f"attempt_{attempt_id or 'preview'}_question_{index}_priority",
+        )
+
+    if is_point_allocation_question(question) and has_interactive_card_activity(question):
+        return render_point_budget(
+            question,
+            extract_activity_items(question),
+            f"attempt_{attempt_id or 'preview'}_question_{index}_budget",
+        )
+
+    if is_fill_blank_question(question) and can_render_word_bank(
+        question, fill_blank_count(question)
+    ):
+        return render_word_bank_tokens(
+            parse_word_bank(question.get("word_bank")),
+            fill_blank_count(question),
+            f"attempt_{attempt_id or 'preview'}_question_{index}_words",
+        )
 
     if is_point_allocation_question(question):
         items = extract_activity_items(question)
@@ -2944,6 +3016,28 @@ def render_session_question(
     options = question.get("options") or []
     pairs = question.get("pairs") or []
     prefix = f"session_{session_id}_{index}"
+    lot2_key = f"session_{session_id}_participant_{participant_id or 'preview'}_question_{index}"
+
+    if is_priority_ranking_question(question) and can_render_ordering(
+        extract_activity_items(question)
+    ):
+        return render_priority_cards(
+            question, extract_activity_items(question), f"{lot2_key}_priority"
+        )
+
+    if is_point_allocation_question(question) and has_interactive_card_activity(question):
+        return render_point_budget(
+            question, extract_activity_items(question), f"{lot2_key}_budget"
+        )
+
+    if is_fill_blank_question(question) and can_render_word_bank(
+        question, fill_blank_count(question)
+    ):
+        return render_word_bank_tokens(
+            parse_word_bank(question.get("word_bank")),
+            fill_blank_count(question),
+            f"{lot2_key}_words",
+        )
 
     if is_point_allocation_question(question):
         items = extract_activity_items(question)
@@ -3265,7 +3359,7 @@ def trainer_app() -> None:
         st.subheader("Importer ou coller un support de formation")
 
         with st.expander(
-            "V24 — Essayer les ateliers interactifs en vue apprenti (sans enregistrer)",
+            "Ateliers interactifs — lots 1 et 2 · aperçu apprenti sans enregistrer",
             expanded=False,
         ):
             st.write(
@@ -3273,7 +3367,7 @@ def trainer_app() -> None:
                 "Cet aperçu ne crée ni quiz ni résultats apprenants."
             )
             demo_quiz = rows_to_quiz(
-                interactive_example_rows(), filename="ateliers_v24_exemples.xlsx"
+                interactive_example_rows(), filename="ateliers_lots_1_2_exemples.xlsx"
             )
             demo_questions = demo_quiz.get("questions") or []
             demo_index = st.selectbox(
@@ -3376,24 +3470,24 @@ Pour une image, renseigne `media_url`, puis éventuellement `media_caption` et `
             int1, int2 = st.columns(2)
             with int1:
                 st.download_button(
-                    "Télécharger le modèle Excel V24",
+                    "Télécharger le modèle Excel — lots 1 et 2",
                     data=interactive_xlsx_bytes(),
-                    file_name="modele_ateliers_interactifs_V24.xlsx",
+                    file_name="modele_ateliers_interactifs_lots_1_2.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     key="download_interactive_xlsx",
                     width="stretch",
                 )
             with int2:
                 st.download_button(
-                    "Télécharger le modèle CSV V24",
+                    "Télécharger le modèle CSV — lots 1 et 2",
                     data=interactive_csv_bytes(),
-                    file_name="modele_ateliers_interactifs_V24.csv",
+                    file_name="modele_ateliers_interactifs_lots_1_2.csv",
                     mime="text/csv",
                     key="download_interactive_csv",
                     width="stretch",
                 )
             st.caption(
-                "Les modèles contiennent six exemples. Remplace-les ou ajoute autant "
+                "Les modèles contiennent neuf exemples (dont le lot 2). Remplace-les ou ajoute autant "
                 "de lignes que nécessaire. Le même import industriel V23 est utilisé."
             )
 
@@ -4023,7 +4117,8 @@ Pour une image, renseigne `media_url`, puis éventuellement `media_caption` et `
 
         elif manual_type == "fill_blank":
             st.caption(
-                "Utilise [...] dans l'énoncé pour chaque trou, puis renseigne les réponses dans le même ordre."
+                "Utilise [...] pour chaque trou. Tu peux proposer des étiquettes "
+                "cliquables ou conserver la saisie libre."
             )
             blank_answers = st.text_area(
                 "Réponses attendues — une par trou",
@@ -4031,6 +4126,18 @@ Pour une image, renseigne `media_url`, puis éventuellement `media_caption` et `
                 key="manual_fill_answers",
             )
             type_payload["correct_answers"] = _manual_lines(blank_answers)
+            word_bank_text = st.text_area(
+                "Étiquettes proposées — une par ligne (facultatif)",
+                height=140,
+                placeholder="risque\ncontrôle\npreuve\naudit",
+                key="manual_fill_word_bank",
+            )
+            if word_bank_text.strip():
+                type_payload["word_bank"] = _manual_lines(word_bank_text)
+                st.caption(
+                    "Prévois une étiquette pour chaque réponse attendue, "
+                    "avec des distracteurs si tu le souhaites."
+                )
 
         st.markdown("#### Correction et traçabilité")
         corr1, corr2 = st.columns(2)
@@ -4077,7 +4184,7 @@ Pour une image, renseigne `media_url`, puis éventuellement `media_caption` et `
                     if not can_render_matching(type_payload.get("pairs") or []):
                         raise ValueError(
                             "Ajoute au moins deux paires complètes et utilise "
-                            "des termes distincts dans la colonne de gauche."
+                            "des termes distincts dans chaque colonne."
                         )
 
                 if manual_type in {
@@ -4087,6 +4194,20 @@ Pour une image, renseigne `media_url`, puis éventuellement `media_caption` et `
                     "self_assessment",
                 } and not type_payload.get("items"):
                     raise ValueError("Ajoute au moins un élément structuré.")
+                if manual_type in {"priority_ranking", "point_allocation"}:
+                    items_for_decision = type_payload.get("items") or []
+                    if not can_render_ordering(items_for_decision):
+                        raise ValueError(
+                            "Ajoute au moins deux éléments distincts pour "
+                            "un arbitrage interactif."
+                        )
+                if manual_type == "priority_ranking" and (
+                    type_payload.get("ranking_mode") == "top_n"
+                ) and (
+                    int(type_payload.get("top_n") or 0) >
+                    len(type_payload.get("items") or [])
+                ):
+                    raise ValueError("Le Top N ne peut pas dépasser le nombre d'éléments.")
 
                 if manual_type == "ordering":
                     item_labels = [
@@ -4118,6 +4239,13 @@ Pour une image, renseigne `media_url`, puis éventuellement `media_caption` et `
                     if len(answers) != blanks:
                         raise ValueError(
                             f"{blanks} trou(s) détecté(s) mais {len(answers)} réponse(s) renseignée(s)."
+                        )
+                    if type_payload.get("word_bank") and not usable_word_bank(
+                        type_payload["word_bank"], answers
+                    ):
+                        raise ValueError(
+                            "Les étiquettes doivent inclure chaque réponse attendue "
+                            "autant de fois que nécessaire."
                         )
 
                 if manual_type == "long_answer" and not type_payload.get("evaluation_criteria"):
@@ -4187,6 +4315,16 @@ Pour une image, renseigne `media_url`, puis éventuellement `media_caption` et `
             st.markdown("---")
             st.markdown("### Aperçu avant ajout")
             render_creator_question(manual_preview, 1)
+            if has_interactive_card_activity(manual_preview):
+                with st.expander("Tester cette question comme un apprenti", expanded=False):
+                    manual_hash = hashlib.sha256(
+                        json.dumps(
+                            manual_preview, ensure_ascii=False, sort_keys=True, default=str
+                        ).encode("utf-8")
+                    ).hexdigest()[:12]
+                    render_interactive_preview(
+                        manual_preview, f"manual_preview_{manual_hash}"
+                    )
 
             add1, add2 = st.columns(2)
             with add1:
@@ -6598,8 +6736,18 @@ def learner_app() -> None:
                                     active_participant_id,
                                 )
                                 if interactive_session:
+                                    can_submit_session = is_complete_decision(
+                                        current_question, user_answer
+                                    )
+                                    if not can_submit_session:
+                                        st.caption(
+                                            "Complète l'exercice et la justification demandée "
+                                            "avant de valider."
+                                        )
                                     submitted_session_answer = st.button(
-                                        "Valider ma réponse", type="primary"
+                                        "Valider ma réponse",
+                                        type="primary",
+                                        disabled=not can_submit_session,
                                     )
                                 else:
                                     submitted_session_answer = st.form_submit_button(
@@ -6831,7 +6979,22 @@ def learner_app() -> None:
                     st.markdown("---")
 
                 if interactive_quiz:
-                    submitted = st.button("Valider mes réponses", type="primary")
+                    pending_decisions = [
+                        i for i, question in enumerate(questions, start=1)
+                        if has_interactive_card_activity(question)
+                        and not is_complete_decision(question, answers.get(i))
+                    ]
+                    if pending_decisions:
+                        st.warning(
+                            "Termine les exercices interactifs avant de valider : "
+                            + ", ".join(f"Q{i}" for i in pending_decisions)
+                            + "."
+                        )
+                    submitted = st.button(
+                        "Valider mes réponses",
+                        type="primary",
+                        disabled=bool(pending_decisions),
+                    )
                 else:
                     submitted = st.form_submit_button("Valider mes réponses")
 

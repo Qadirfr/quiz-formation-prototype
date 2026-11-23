@@ -8,6 +8,8 @@ import unicodedata
 from pathlib import Path
 from typing import Any, Dict, List
 
+from utils.interactive_lot2 import parse_word_bank, usable_word_bank
+
 
 TYPE_MAP = {
     "qcm": "single_choice",
@@ -537,6 +539,16 @@ def rows_to_quiz(rows: List[Dict[str, Any]], filename: str = "quiz") -> Dict[str
             ),
         }
 
+        if qtype == "fill_blank":
+            expected_words = get_value(
+                row, "correct_answers", "reponses_attendues", "reponses_trous"
+            ) or correct_answer
+            if expected_words:
+                question["correct_answers"] = parse_word_bank(expected_words)
+            words = get_value(row, "word_bank", "mots_proposes", "etiquettes")
+            if words:
+                question["word_bank"] = parse_word_bank(words)
+
         case_id = get_value(row, "case_id", "scenario_id", "cas_id")
         if case_id:
             question["case_id"] = case_id
@@ -809,7 +821,9 @@ def validate_imported_quiz(quiz: Dict[str, Any]) -> Dict[str, Any]:
 
         elif qtype == "fill_blank":
             blanks = len(re.findall(r"\[\s*(?:\.\.\.|…+)\s*\]", text))
-            answers = question.get("correct_answers") or []
+            answers = question.get("correct_answers") or parse_word_bank(
+                question.get("correct_answer")
+            )
             if blanks == 0:
                 q_errors.append("Question a trous : aucun marqueur [...] detecte.")
             if answers and blanks and len(answers) != blanks:
@@ -818,6 +832,12 @@ def validate_imported_quiz(quiz: Dict[str, Any]) -> Dict[str, Any]:
                 )
             if not answers:
                 q_errors.append("Question a trous : reponses attendues manquantes.")
+            if question.get("word_bank") and not usable_word_bank(
+                question.get("word_bank"), answers
+            ):
+                q_errors.append(
+                    "Etiquettes : la banque de mots doit inclure toutes les bonnes reponses."
+                )
 
         elif qtype == "self_assessment":
             if not items and not options:
@@ -834,8 +854,15 @@ def validate_imported_quiz(quiz: Dict[str, Any]) -> Dict[str, Any]:
                 q_errors.append("Priorisation : elements manquants.")
             if question.get("ranking_mode") not in {"rank_all", "top_n"}:
                 q_errors.append("Priorisation : ranking_mode invalide ou manquant.")
-            if question.get("ranking_mode") == "top_n" and not question.get("top_n"):
-                q_errors.append("Priorisation Top N : top_n manquant.")
+            if question.get("ranking_mode") == "top_n":
+                try:
+                    top_n = int(question.get("top_n") or 0)
+                except (ValueError, TypeError):
+                    top_n = 0
+                if top_n < 1 or top_n > len(items):
+                    q_errors.append(
+                        "Priorisation Top N : top_n doit etre compris entre 1 et le nombre d'elements."
+                    )
 
         elif qtype == "long_answer":
             if not (
@@ -1017,6 +1044,8 @@ def template_csv_bytes() -> bytes:
         "top_n",
         "require_justification",
         "correct_order",
+        "correct_answers",
+        "word_bank",
         "scale_min",
         "scale_max",
         "max_words",

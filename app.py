@@ -6686,8 +6686,18 @@ def learner_app() -> None:
                                     active_participant_id,
                                 )
                                 if interactive_session:
+                                    can_submit_session = is_complete_decision(
+                                        current_question, user_answer
+                                    )
+                                    if not can_submit_session:
+                                        st.caption(
+                                            "Complète l'exercice et la justification demandée "
+                                            "avant de valider."
+                                        )
                                     submitted_session_answer = st.button(
-                                        "Valider ma réponse", type="primary"
+                                        "Valider ma réponse",
+                                        type="primary",
+                                        disabled=not can_submit_session,
                                     )
                                 else:
                                     submitted_session_answer = st.form_submit_button(
@@ -6919,7 +6929,22 @@ def learner_app() -> None:
                     st.markdown("---")
 
                 if interactive_quiz:
-                    submitted = st.button("Valider mes réponses", type="primary")
+                    pending_decisions = [
+                        i for i, question in enumerate(questions, start=1)
+                        if has_interactive_card_activity(question)
+                        and not is_complete_decision(question, answers.get(i))
+                    ]
+                    if pending_decisions:
+                        st.warning(
+                            "Termine les exercices interactifs avant de valider : "
+                            + ", ".join(f"Q{i}" for i in pending_decisions)
+                            + "."
+                        )
+                    submitted = st.button(
+                        "Valider mes réponses",
+                        type="primary",
+                        disabled=bool(pending_decisions),
+                    )
                 else:
                     submitted = st.form_submit_button("Valider mes réponses")
 

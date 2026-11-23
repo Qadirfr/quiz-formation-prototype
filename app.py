@@ -2586,6 +2586,11 @@ def render_creator_question(question: Dict[str, Any], index: int) -> None:
             count = fill_blank_count(question)
             st.markdown(fill_blank_prompt_text(question))
             st.caption(f"{count} champ(s) à compléter.")
+            if question.get("word_bank"):
+                st.caption(
+                    "Étiquettes : "
+                    + " · ".join(parse_word_bank(question.get("word_bank")))
+                )
             expected = get_fill_blank_expected(question, count)
             if expected and len(expected) == count:
                 st.success(
@@ -3354,7 +3359,7 @@ def trainer_app() -> None:
         st.subheader("Importer ou coller un support de formation")
 
         with st.expander(
-            "V24 — Essayer les ateliers interactifs en vue apprenti (sans enregistrer)",
+            "Ateliers interactifs — lots 1 et 2 · aperçu apprenti sans enregistrer",
             expanded=False,
         ):
             st.write(
@@ -3362,7 +3367,7 @@ def trainer_app() -> None:
                 "Cet aperçu ne crée ni quiz ni résultats apprenants."
             )
             demo_quiz = rows_to_quiz(
-                interactive_example_rows(), filename="ateliers_v24_exemples.xlsx"
+                interactive_example_rows(), filename="ateliers_lots_1_2_exemples.xlsx"
             )
             demo_questions = demo_quiz.get("questions") or []
             demo_index = st.selectbox(
@@ -3465,24 +3470,24 @@ Pour une image, renseigne `media_url`, puis éventuellement `media_caption` et `
             int1, int2 = st.columns(2)
             with int1:
                 st.download_button(
-                    "Télécharger le modèle Excel V24",
+                    "Télécharger le modèle Excel — lots 1 et 2",
                     data=interactive_xlsx_bytes(),
-                    file_name="modele_ateliers_interactifs_V24.xlsx",
+                    file_name="modele_ateliers_interactifs_lots_1_2.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     key="download_interactive_xlsx",
                     width="stretch",
                 )
             with int2:
                 st.download_button(
-                    "Télécharger le modèle CSV V24",
+                    "Télécharger le modèle CSV — lots 1 et 2",
                     data=interactive_csv_bytes(),
-                    file_name="modele_ateliers_interactifs_V24.csv",
+                    file_name="modele_ateliers_interactifs_lots_1_2.csv",
                     mime="text/csv",
                     key="download_interactive_csv",
                     width="stretch",
                 )
             st.caption(
-                "Les modèles contiennent six exemples. Remplace-les ou ajoute autant "
+                "Les modèles contiennent neuf exemples (dont le lot 2). Remplace-les ou ajoute autant "
                 "de lignes que nécessaire. Le même import industriel V23 est utilisé."
             )
 
@@ -4179,7 +4184,7 @@ Pour une image, renseigne `media_url`, puis éventuellement `media_caption` et `
                     if not can_render_matching(type_payload.get("pairs") or []):
                         raise ValueError(
                             "Ajoute au moins deux paires complètes et utilise "
-                            "des termes distincts dans la colonne de gauche."
+                            "des termes distincts dans chaque colonne."
                         )
 
                 if manual_type in {
@@ -4189,6 +4194,20 @@ Pour une image, renseigne `media_url`, puis éventuellement `media_caption` et `
                     "self_assessment",
                 } and not type_payload.get("items"):
                     raise ValueError("Ajoute au moins un élément structuré.")
+                if manual_type in {"priority_ranking", "point_allocation"}:
+                    items_for_decision = type_payload.get("items") or []
+                    if not can_render_ordering(items_for_decision):
+                        raise ValueError(
+                            "Ajoute au moins deux éléments distincts pour "
+                            "un arbitrage interactif."
+                        )
+                if manual_type == "priority_ranking" and (
+                    type_payload.get("ranking_mode") == "top_n"
+                ) and (
+                    int(type_payload.get("top_n") or 0) >
+                    len(type_payload.get("items") or [])
+                ):
+                    raise ValueError("Le Top N ne peut pas dépasser le nombre d'éléments.")
 
                 if manual_type == "ordering":
                     item_labels = [

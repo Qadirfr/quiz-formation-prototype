@@ -1,4 +1,4 @@
-"""Editable bulk-import models for the two interactive card activities.
+"""Editable bulk-import models for the five interactive activity types.
 
 The column names intentionally match utils.table_import.read_quiz_table:
 one spreadsheet row equals one question, no embedded JSON required.
@@ -15,13 +15,15 @@ FIELDS = [
     "type", "difficulty", "cognitive_level", "learning_objective",
     "competency", "concept_evaluated", "question",
     *(f"item_{i}" for i in range(1, 7)),
-    "correct_order",
+    "correct_order", "correct_answers", "word_bank",
+    "ranking_mode", "top_n", "total_points", "require_justification",
+    "evaluation_criteria",
     *(field for i in range(1, 7) for field in (f"pair_{i}_left", f"pair_{i}_right")),
     "explanation", "remediation", "source_excerpt",
     "case_id", "context_title", "context_text",
 ]
 
-EXAMPLE_TITLE = "Ateliers interactifs V24 - exemples a adapter"
+EXAMPLE_TITLE = "Ateliers interactifs lots 1 et 2 - exemples a adapter"
 
 
 def _base(**fields: str) -> dict[str, str]:
@@ -52,8 +54,37 @@ def _match(*pairs: tuple[str, str], **fields: str) -> dict[str, str]:
     return row
 
 
+def _rank(*items: str, top_n: int, **fields: str) -> dict[str, str]:
+    row = _base(
+        type="priority_ranking", ranking_mode="top_n", top_n=str(top_n),
+        require_justification="true", **fields,
+    )
+    for index, value in enumerate(items, 1):
+        row[f"item_{index}"] = value
+    return row
+
+
+def _fill(*, answers: list[str], words: list[str], **fields: str) -> dict[str, str]:
+    return _base(
+        type="fill_blank",
+        correct_answers=" | ".join(answers),
+        word_bank=" | ".join(words),
+        **fields,
+    )
+
+
+def _budget(*items: str, points: int, **fields: str) -> dict[str, str]:
+    row = _base(
+        type="point_allocation", total_points=str(points),
+        require_justification="true", **fields,
+    )
+    for index, value in enumerate(items, 1):
+        row[f"item_{index}"] = value
+    return row
+
+
 def example_rows() -> list[dict[str, str]]:
-    """Six independent, non-confidential trainer workshop examples."""
+    """Nine non-confidential trainer examples for Lots 1 and 2."""
     return [
         _order(
             "Documenter la conclusion",
@@ -145,6 +176,52 @@ def example_rows() -> list[dict[str, str]]:
             explanation="L'actif est la ressource, le responsable pilote sa gestion, la classification aide a adapter les protections.",
             remediation="Revoir un exemple d'inventaire d'actifs et ses champs de classification.",
         ),
+        _rank(
+            "Compte administrateur inactif toujours actif",
+            "Politique de nommage des dossiers a revoir",
+            "Absence de test recent de restauration",
+            "Absence de suivi des recommandations critiques",
+            top_n=2,
+            training_scope="SSI",
+            domain="Risques SI",
+            subdomain="Priorisation des constats",
+            learning_objective="Argumenter un ordre de priorite sur des ecarts SSI.",
+            competency="Exercer le jugement professionnel.",
+            concept_evaluated="Impact, urgence et exposition",
+            question="Choisis les deux risques a traiter d'abord et justifie leur ordre.",
+            explanation="Plusieurs classements peuvent etre defensables. L'evaluation exige un raisonnement motive par l'impact et la vraisemblance.",
+            remediation="Comparer les risques en explicitant les hypotheses et les mesures compensatoires.",
+            evaluation_criteria="Coherence de la priorisation | Justification du risque residuel",
+        ),
+        _fill(
+            answers=["DPO", "responsable du traitement"],
+            words=["sous-traitant", "DPO", "responsable du traitement", "auditeur"],
+            training_scope="CDPO",
+            domain="RGPD",
+            subdomain="Acteurs et responsabilites",
+            learning_objective="Distinguer deux roles dans un traitement de donnees.",
+            competency="Reconnaissance des responsabilites RGPD.",
+            concept_evaluated="DPO et responsable du traitement",
+            question="Le [...] conseille et surveille la conformite. Le [...] determine les finalites et moyens du traitement.",
+            explanation="Le DPO conseille et controle la conformite. Le responsable du traitement determine les finalites et les moyens du traitement.",
+            remediation="Revoir les roles respectifs dans les articles 4, 38 et 39 du RGPD.",
+        ),
+        _budget(
+            "Verifier les habilitations et comptes privilegies",
+            "Tester la restauration et les plans de secours",
+            "Revoir les journaux et alertes de securite",
+            points=100,
+            training_scope="SSI",
+            domain="Plan d'audit",
+            subdomain="Allocation de ressources",
+            learning_objective="Construire un arbitrage sous contrainte de ressources.",
+            competency="Justifier l'affectation d'un budget de controle.",
+            concept_evaluated="Risque et priorisation des moyens",
+            question="Repartis 100 points entre les trois chantiers d'audit pour une equipe aux moyens limites.",
+            evaluation_criteria="Affectation totale egale a 100 | Raisonnement explicite | Prise en compte des risques",
+            explanation="Il n'existe pas de repartition unique. L'apprenant doit expliquer ses choix au regard des objectifs et des risques.",
+            remediation="Reprendre les criteres de criticite, le niveau de risque et la disponibilite des ressources.",
+        ),
     ]
 
 
@@ -177,8 +254,14 @@ def interactive_xlsx_bytes() -> bytes:
     blue = "205EAA"
     white = "FFFFFF"
     groups = {
-        "type": "ordering ou matching",
-        "correct_order": "Pour ordering : sequence des lettres A, B, C... dans l'ordre attendu (ex. BCDA)",
+        "type": "ordering, matching, priority_ranking, fill_blank ou point_allocation",
+        "correct_order": "Pour ordering : lettres dans l'ordre attendu (ex. BCDA)",
+        "correct_answers": "Pour fill_blank : une bonne reponse par trou, separees par |",
+        "word_bank": "Pour fill_blank : etiquettes proposees avec distracteurs, separees par |",
+        "ranking_mode": "Pour priority_ranking : rank_all ou top_n",
+        "top_n": "Nombre de cartes a conserver si ranking_mode = top_n",
+        "total_points": "Budget total de points pour point_allocation",
+        "require_justification": "true / false : demander une justification pour priorisation ou budget",
         "question": "Enonce presente a l'apprenant",
         "remediation": "Conseils de revision presentes apres la correction",
         "training_scope": "Formation ou parcours (ex. CDPO, SSI, Audit SI)",
@@ -209,8 +292,12 @@ def interactive_xlsx_bytes() -> bytes:
     sheet.freeze_panes = "D2"
     sheet.auto_filter.ref = f"A1:{sheet.cell(1, len(FIELDS)).column_letter}{sheet.max_row}"
 
-    types = DataValidation(type="list", formula1='"ordering,matching"', allow_blank=False)
-    types.error = "Choisir ordering ou matching."
+    types = DataValidation(
+        type="list",
+        formula1='"ordering,matching,priority_ranking,fill_blank,point_allocation"',
+        allow_blank=False,
+    )
+    types.error = "Choisir un des cinq formats interactifs."
     types.errorTitle = "Type de question"
     types.showErrorMessage = True
     sheet.add_data_validation(types)
@@ -223,18 +310,20 @@ def interactive_xlsx_bytes() -> bytes:
     guide.column_dimensions["A"].width = 30
     guide.column_dimensions["B"].width = 95
     instructions = [
-        ("MODELE ATELIERS V24", "Ordonnancement et appariement. Une ligne dans l'onglet Questions = une question."),
-        ("1 - Dupliquer", "Dans Questions, duplique une ligne d'exemple ou ajoute une nouvelle ligne a partir de la ligne 8."),
-        ("2 - Choisir", "Renseigne type = ordering OU matching. Les autres types sont traites par le modele industriel general."),
-        ("3 - Taxonomie", "Renseigne training_scope (formation), domain, subdomain, question_set_type et les objectifs pedagogiques."),
-        ("4 - Ordre", "Pour ordering, renseigne item_1, item_2... dans un ordre de saisie quelconque. correct_order contient les LETTRES attendues, par ex. BCDA."),
-        ("5 - Appariement", "Pour matching, renseigne pair_1_left, pair_1_right, etc. Chaque association occupe une paire de colonnes."),
-        ("6 - Correction", "Renseigne explanation (raisonnement) et remediation (conseils de revision). source_excerpt sert a tracer la source."),
-        ("7 - Charger", "Espace formateur > 1. Source > Import industriel > Fichier de questions a importer > Analyser le fichier."),
-        ("8 - Verifier", "Consulte le rapport de controle. Previsualise les ateliers sans enregistrer, puis ajoute directement a la banque."),
-        ("9 - Utiliser", "Constitue un quiz depuis la banque de questions ou charge les exercices dans Quiz createur."),
-        ("Attention", "N'utilise pas de cellules fusionnees ni de lignes de titres au-dessus des noms de colonnes dans Questions."),
-        ("Capacite", "Jusqu'a 6 elements ou 6 paires dans ce modele. D'autres lignes/questions peuvent etre ajoutees librement."),
+        ("MODELE ATELIERS - LOTS 1 ET 2", "Cinq types d'exercices. Une ligne = une question. Exemple : 9 questions pre-remplies."),
+        ("1 - Dupliquer", "Dans Questions, duplique une ligne d'exemple ou ajoute une nouvelle ligne sous les exemples."),
+        ("2 - Type", "Choisis ordering, matching, priority_ranking, fill_blank ou point_allocation dans la liste type."),
+        ("3 - Taxonomie", "Renseigne training_scope, domain, subdomain, question_set_type, difficulte et objectif pedagogique."),
+        ("4 - Ordre", "ordering : item_1 ... item_6 ; correct_order = BCDA selon l'ordre des cartes."),
+        ("5 - Appariement", "matching : pair_1_left + pair_1_right ... jusqu'a 6 paires sans libelles ambigus."),
+        ("6 - Priorites", "priority_ranking : item_1 ... item_6 ; ranking_mode = top_n ou rank_all ; top_n si top_n."),
+        ("7 - Etiquettes", "fill_blank : marque un trou par [...] dans question ; correct_answers = mot1 | mot2 ; word_bank = mot2 | intrus | mot1."),
+        ("8 - Budget", "point_allocation : item_1 ... item_6 ; total_points = 100 ; justification true ou false."),
+        ("9 - Revision", "explanation = correction detaillee, remediation = piste de revision, source_excerpt = source."),
+        ("10 - Import", "Espace formateur > 1. Source > Import industriel > Importer le fichier puis Analyser."),
+        ("11 - Apercu", "Tester une question comme apprenti, puis Ajouter directement a la banque seulement apres controle."),
+        ("Attention", "Ne change pas les noms des colonnes ; pas de cellules fusionnees ni de ligne de titre."),
+        ("Capacite", "Jusqu'a 6 cartes ou paires par question dans ce modele. Ajoute autant de lignes que tu souhaites."),
     ]
     for i, (title, description) in enumerate(instructions, 1):
         guide.cell(i, 1, title)

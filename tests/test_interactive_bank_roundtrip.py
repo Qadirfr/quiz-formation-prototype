@@ -17,8 +17,12 @@ def test_full_interactive_lot_imported_to_existing_question_bank(monkeypatch, tm
     monkeypatch.setenv("SQLITE_DB_PATH", str(tmp_path / "quiz-lot2.db"))
 
     from utils.question_bank import (
-        add_quiz_to_bank, get_question_bank_stats, select_random_questions_scoped
+        add_quiz_to_bank, get_question_bank_stats, init_question_bank_db,
+        select_random_questions_scoped,
     )
+    # The prior UI smoke test opened another temporary SQLite file.
+    # Reinitialize this fresh test database rather than reuse its cached init.
+    init_question_bank_db.cache_clear()
 
     quiz = read_quiz_table(_Upload(interactive_xlsx_bytes()))
     assert validate_imported_quiz(quiz)["valid"]

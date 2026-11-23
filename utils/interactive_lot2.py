@@ -241,7 +241,9 @@ def is_complete_decision(question: dict[str, Any], answer: Any) -> bool:
         if not isinstance(answer, dict):
             return False
         blanks = len(re.findall(r"\[\s*(?:\.\.\.|…+)\s*\]", question.get("question") or ""))
-        completed = blanks > 0 and len(answer) == blanks and all(str(value).strip() for value in answer.values())
+        return blanks > 0 and len(answer) == blanks and all(
+            str(value).strip() for value in answer.values()
+        )
     else:
         return True
     return completed and (

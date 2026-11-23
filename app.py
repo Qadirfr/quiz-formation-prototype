@@ -42,6 +42,7 @@ from utils.interactive_lot2 import (
     render_point_budget,
     render_priority_cards,
     render_word_bank_tokens,
+    usable_word_bank,
 )
 from utils.export_utils import quiz_to_csv_bytes, quiz_to_json_bytes, quiz_to_markdown, quiz_to_markdown_bytes
 from utils.file_reader import clean_training_text, read_uploaded_file
@@ -4111,7 +4112,8 @@ Pour une image, renseigne `media_url`, puis éventuellement `media_caption` et `
 
         elif manual_type == "fill_blank":
             st.caption(
-                "Utilise [...] dans l'énoncé pour chaque trou, puis renseigne les réponses dans le même ordre."
+                "Utilise [...] pour chaque trou. Tu peux proposer des étiquettes "
+                "cliquables ou conserver la saisie libre."
             )
             blank_answers = st.text_area(
                 "Réponses attendues — une par trou",
@@ -4119,6 +4121,18 @@ Pour une image, renseigne `media_url`, puis éventuellement `media_caption` et `
                 key="manual_fill_answers",
             )
             type_payload["correct_answers"] = _manual_lines(blank_answers)
+            word_bank_text = st.text_area(
+                "Étiquettes proposées — une par ligne (facultatif)",
+                height=140,
+                placeholder="risque\ncontrôle\npreuve\naudit",
+                key="manual_fill_word_bank",
+            )
+            if word_bank_text.strip():
+                type_payload["word_bank"] = _manual_lines(word_bank_text)
+                st.caption(
+                    "Prévois une étiquette pour chaque réponse attendue, "
+                    "avec des distracteurs si tu le souhaites."
+                )
 
         st.markdown("#### Correction et traçabilité")
         corr1, corr2 = st.columns(2)
@@ -4207,6 +4221,13 @@ Pour une image, renseigne `media_url`, puis éventuellement `media_caption` et `
                         raise ValueError(
                             f"{blanks} trou(s) détecté(s) mais {len(answers)} réponse(s) renseignée(s)."
                         )
+                    if type_payload.get("word_bank") and not usable_word_bank(
+                        type_payload["word_bank"], answers
+                    ):
+                        raise ValueError(
+                            "Les étiquettes doivent inclure chaque réponse attendue "
+                            "autant de fois que nécessaire."
+                        )
 
                 if manual_type == "long_answer" and not type_payload.get("evaluation_criteria"):
                     raise ValueError(
@@ -4275,6 +4296,16 @@ Pour une image, renseigne `media_url`, puis éventuellement `media_caption` et `
             st.markdown("---")
             st.markdown("### Aperçu avant ajout")
             render_creator_question(manual_preview, 1)
+            if has_interactive_card_activity(manual_preview):
+                with st.expander("Tester cette question comme un apprenti", expanded=False):
+                    manual_hash = hashlib.sha256(
+                        json.dumps(
+                            manual_preview, ensure_ascii=False, sort_keys=True, default=str
+                        ).encode("utf-8")
+                    ).hexdigest()[:12]
+                    render_interactive_preview(
+                        manual_preview, f"manual_preview_{manual_hash}"
+                    )
 
             add1, add2 = st.columns(2)
             with add1:

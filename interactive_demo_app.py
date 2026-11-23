@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 
 import streamlit as st
 
@@ -113,7 +114,7 @@ for index, question in enumerate(quiz.get("questions") or []):
         question.get("type") == "fill_blank"
         and can_render_word_bank(
             question,
-            len(__import__("re").findall(r"\[\s*(?:\.\.\.|…+)\s*\]", question.get("question") or "")),
+            len(re.findall(r"\[\s*(?:\.\.\.|…+)\s*\]", question.get("question") or "")),
         )
     ):
         candidates.append((index, question))

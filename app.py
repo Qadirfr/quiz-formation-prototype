@@ -2751,6 +2751,31 @@ def render_test_question(
     options = question.get("options") or []
     pairs = question.get("pairs") or []
 
+    if is_priority_ranking_question(question) and can_render_ordering(
+        extract_activity_items(question)
+    ):
+        return render_priority_cards(
+            question,
+            extract_activity_items(question),
+            f"attempt_{attempt_id or 'preview'}_question_{index}_priority",
+        )
+
+    if is_point_allocation_question(question) and has_interactive_card_activity(question):
+        return render_point_budget(
+            question,
+            extract_activity_items(question),
+            f"attempt_{attempt_id or 'preview'}_question_{index}_budget",
+        )
+
+    if is_fill_blank_question(question) and can_render_word_bank(
+        question, fill_blank_count(question)
+    ):
+        return render_word_bank_tokens(
+            parse_word_bank(question.get("word_bank")),
+            fill_blank_count(question),
+            f"attempt_{attempt_id or 'preview'}_question_{index}_words",
+        )
+
     if is_point_allocation_question(question):
         items = extract_activity_items(question)
         total_points = int(question.get("total_points") or 0)
@@ -2985,6 +3010,28 @@ def render_session_question(
     options = question.get("options") or []
     pairs = question.get("pairs") or []
     prefix = f"session_{session_id}_{index}"
+    lot2_key = f"session_{session_id}_participant_{participant_id or 'preview'}_question_{index}"
+
+    if is_priority_ranking_question(question) and can_render_ordering(
+        extract_activity_items(question)
+    ):
+        return render_priority_cards(
+            question, extract_activity_items(question), f"{lot2_key}_priority"
+        )
+
+    if is_point_allocation_question(question) and has_interactive_card_activity(question):
+        return render_point_budget(
+            question, extract_activity_items(question), f"{lot2_key}_budget"
+        )
+
+    if is_fill_blank_question(question) and can_render_word_bank(
+        question, fill_blank_count(question)
+    ):
+        return render_word_bank_tokens(
+            parse_word_bank(question.get("word_bank")),
+            fill_blank_count(question),
+            f"{lot2_key}_words",
+        )
 
     if is_point_allocation_question(question):
         items = extract_activity_items(question)

@@ -27,19 +27,24 @@ class _UploadedFile(io.BytesIO):
         ("modele_cartes.xlsx", interactive_xlsx_bytes),
     ],
 )
-def test_template_roundtrips_to_six_valid_questions(filename, data_factory):
+def test_template_roundtrips_to_nine_valid_questions(filename, data_factory):
     quiz = read_quiz_table(_UploadedFile(filename, data_factory()))
     report = validate_imported_quiz(quiz)
     assert report["valid"], report["errors"]
-    assert len(quiz["questions"]) == 6
+    assert len(quiz["questions"]) == 9
     assert [q["type"] for q in quiz["questions"]] == [
-        "ordering", "matching", "ordering", "matching", "ordering", "matching"
+        "ordering", "matching", "ordering", "matching", "ordering", "matching",
+        "priority_ranking", "fill_blank", "point_allocation"
     ]
     assert quiz["questions"][0]["correct_order"] == list("BCDA")
     assert len(quiz["questions"][1]["pairs"]) == 3
     assert quiz["questions"][3]["training_scope"] == "CDPO"
     assert quiz["questions"][3]["domain"] == "RGPD"
     assert quiz["questions"][0]["subdomain"] == "Execution d'un controle"
+    assert quiz["questions"][6]["top_n"] == 2
+    assert quiz["questions"][7]["word_bank"]
+    assert quiz["questions"][7]["correct_answers"] == ["DPO", "responsable du traitement"]
+    assert quiz["questions"][8]["total_points"] == 100
     assert all(q.get("remediation") for q in quiz["questions"])
     assert all(q.get("explanation") for q in quiz["questions"])
 
@@ -103,5 +108,21 @@ def test_excel_import_prefers_questions_when_guide_was_last_active():
     stream = io.BytesIO()
     workbook.save(stream)
     quiz = read_quiz_table(_UploadedFile("modified_active_sheet.xlsx", stream.getvalue()))
-    assert len(quiz["questions"]) == 6
+    assert len(quiz["questions"]) == 9
     assert validate_imported_quiz(quiz)["valid"]
+
+
+def test_word_bank_import_rejects_missing_expected_token():
+    row = dict(example_rows()[7])
+    row["word_bank"] = "DPO | auditeur | sous-traitant"
+    report = validate_imported_quiz(rows_to_quiz([row]))
+    assert not report["valid"]
+    assert any("banque de mots" in msg for msg in report["errors"])
+
+
+def test_top_n_import_rejects_more_priorities_than_cards():
+    row = dict(example_rows()[6])
+    row["top_n"] = "7"
+    report = validate_imported_quiz(rows_to_quiz([row]))
+    assert not report["valid"]
+    assert any("top_n doit etre compris" in msg for msg in report["errors"])

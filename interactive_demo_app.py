@@ -21,6 +21,15 @@ from utils.interactive_templates import (
     interactive_csv_bytes,
     interactive_xlsx_bytes,
 )
+from utils.interactive_lot2 import (
+    can_render_word_bank,
+    is_complete_decision,
+    normalize_word,
+    parse_word_bank,
+    render_point_budget,
+    render_priority_cards,
+    render_word_bank_tokens,
+)
 from utils.table_import import read_quiz_table, rows_to_quiz, validate_imported_quiz
 
 
@@ -48,19 +57,19 @@ st.caption(
 with st.sidebar:
     st.subheader("Choisir une source")
     source = st.radio(
-        "Exercices à afficher", ["Six exemples inclus", "Mon fichier CSV / Excel"]
+        "Exercices à afficher", ["Neuf exemples inclus", "Mon fichier CSV / Excel"]
     )
     st.divider()
     st.download_button(
         "Modèle Excel à compléter",
         data=interactive_xlsx_bytes(),
-        file_name="modele_ateliers_interactifs_V24.xlsx",
+        file_name="modele_ateliers_interactifs_lots_1_2.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
     st.download_button(
         "Modèle CSV à compléter",
         data=interactive_csv_bytes(),
-        file_name="modele_ateliers_interactifs_V24.csv",
+        file_name="modele_ateliers_interactifs_lots_1_2.csv",
         mime="text/csv",
     )
 
@@ -97,13 +106,21 @@ for index, question in enumerate(quiz.get("questions") or []):
     ) or (
         question.get("type") == "matching"
         and can_render_matching(question.get("pairs") or [])
+    ) or (
+        question.get("type") in {"priority_ranking", "point_allocation"}
+        and len(question.get("items") or []) >= 2
+    ) or (
+        question.get("type") == "fill_blank"
+        and can_render_word_bank(
+            question,
+            len(__import__("re").findall(r"\[\s*(?:\.\.\.|…+)\s*\]", question.get("question") or "")),
+        )
     ):
         candidates.append((index, question))
 
 if not candidates:
     st.warning(
-        "Aucun atelier de type ordering ou matching avec au moins deux cartes "
-        "exploitables n'a été trouvé."
+        "Aucun atelier interactif exploitable n'a été trouvé."
     )
     st.stop()
 
@@ -144,10 +161,9 @@ if question["type"] == "ordering":
     ] if isinstance(correct_order, list) else list(str(correct_order).upper())
     score = sum(1 for i, x in enumerate(expected) if i < len(answer) and answer[i] == x)
     denominator = len(expected)
-    from utils.interactive_activities import shuffled_indexes
     by_label = {str(item["label"]).upper(): item["text"] for item in items}
     correction_text = " → ".join(by_label.get(item, item) for item in expected)
-else:
+elif question["type"] == "matching":
     pairs = question.get("pairs") or []
     answer = render_matching_cards(pairs, key + "_cards")
     complete = len(answer) == len(pairs)
@@ -155,16 +171,42 @@ else:
     score = sum(1 for left, right in expected_pairs.items() if answer.get(left) == right)
     denominator = len(pairs)
     correction_text = "\n".join(f"- {left} → {right}" for left, right in expected_pairs.items())
+elif question["type"] == "priority_ranking":
+    answer = render_priority_cards(question, question["items"], key + "_priority")
+    complete = is_complete_decision(question, answer)
+    score, denominator = None, 0
+    correction_text = "Priorisation à analyser avec les critères du formateur."
+elif question["type"] == "point_allocation":
+    answer = render_point_budget(question, question["items"], key + "_budget")
+    complete = is_complete_decision(question, answer)
+    score, denominator = None, 0
+    correction_text = "Arbitrage à analyser avec les critères du formateur."
+else:
+    words = parse_word_bank(question.get("word_bank"))
+    expected = parse_word_bank(question.get("correct_answers"))
+    answer = render_word_bank_tokens(words, len(expected), key + "_words")
+    complete = is_complete_decision(question, answer)
+    score = sum(
+        normalize_word(answer.get(str(i), "")) == normalize_word(word)
+        for i, word in enumerate(expected, start=1)
+    )
+    denominator = len(expected)
+    correction_text = "Réponses attendues : " + ", ".join(expected)
 
 if not complete:
-    st.info("Complète toutes les cartes pour afficher la correction.")
+    st.info("Complète l'exercice avant de valider.")
 
 if st.button("Valider cet essai et afficher la correction", disabled=not complete, type="primary"):
     st.session_state[key + "_validated_answer"] = answer
 
 if st.session_state.get(key + "_validated_answer") == answer and complete:
-    st.metric("Score de l'essai", f"{score} / {denominator}")
-    st.markdown("**Correction attendue**")
+    if score is None:
+        st.info("Réponse enregistrée dans cet essai — correction différée.")
+        if question.get("evaluation_criteria"):
+            st.write("Critères : " + " ; ".join(question["evaluation_criteria"]))
+    else:
+        st.metric("Score de l'essai", f"{score} / {denominator}")
+    st.markdown("**Correction attendue ou piste de correction**")
     st.markdown(correction_text)
     if question.get("explanation"):
         st.info(question["explanation"])

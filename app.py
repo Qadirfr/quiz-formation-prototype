@@ -35,6 +35,14 @@ from utils.interactive_activities import (
     render_matching_cards,
     render_ordering_cards,
 )
+from utils.interactive_lot2 import (
+    can_render_word_bank,
+    is_complete_decision,
+    parse_word_bank,
+    render_point_budget,
+    render_priority_cards,
+    render_word_bank_tokens,
+)
 from utils.export_utils import quiz_to_csv_bytes, quiz_to_json_bytes, quiz_to_markdown, quiz_to_markdown_bytes
 from utils.file_reader import clean_training_text, read_uploaded_file
 from utils.learner_db import (
@@ -2632,7 +2640,16 @@ def render_creator_question(question: Dict[str, Any], index: int) -> None:
 
 
 def has_interactive_card_activity(question: Dict[str, Any]) -> bool:
-    """Only card activities require a live Streamlit container, not a form."""
+    """Question widgets requiring immediate reruns cannot be nested in st.form."""
+    if is_priority_ranking_question(question):
+        return can_render_ordering(extract_activity_items(question))
+    if is_point_allocation_question(question):
+        return (
+            can_render_ordering(extract_activity_items(question))
+            and int(question.get("total_points") or 0) > 0
+        )
+    if is_fill_blank_question(question):
+        return can_render_word_bank(question, fill_blank_count(question))
     if is_ordering_question(question):
         return can_render_ordering(extract_ordering_items(question))
     if question.get("type") == "matching":
@@ -2648,7 +2665,29 @@ def render_interactive_preview(question: Dict[str, Any], preview_key: str) -> No
         f"Sous-domaine : {question.get('subdomain') or '-'}"
     )
     render_question_context_and_media(question)
-    if is_ordering_question(question):
+    if is_priority_ranking_question(question):
+        st.markdown(structured_activity_prompt_text(question))
+        answer = render_priority_cards(
+            question, extract_activity_items(question), f"{preview_key}_priority"
+        )
+        is_complete = is_complete_decision(question, answer)
+    elif is_point_allocation_question(question):
+        st.markdown(structured_activity_prompt_text(question))
+        answer = render_point_budget(
+            question, extract_activity_items(question), f"{preview_key}_budget"
+        )
+        is_complete = is_complete_decision(question, answer)
+    elif is_fill_blank_question(question) and can_render_word_bank(
+        question, fill_blank_count(question)
+    ):
+        st.markdown(fill_blank_prompt_text(question))
+        answer = render_word_bank_tokens(
+            parse_word_bank(question.get("word_bank")),
+            fill_blank_count(question),
+            f"{preview_key}_words",
+        )
+        is_complete = is_complete_decision(question, answer)
+    elif is_ordering_question(question):
         st.markdown(ordering_prompt_text(question))
         items = extract_ordering_items(question)
         answer = render_ordering_cards(items, f"{preview_key}_cards")
@@ -2659,7 +2698,7 @@ def render_interactive_preview(question: Dict[str, Any], preview_key: str) -> No
         answer = render_matching_cards(pairs, f"{preview_key}_cards")
         is_complete = len(answer) == len(pairs)
     else:
-        st.info("Cette question n'utilise pas encore les cartes interactives.")
+        st.info("Cette question n'a pas encore de prévisualisation interactive.")
         return
 
     st.caption("Aucune réponse de cet aperçu n'est enregistrée dans la base.")
@@ -2678,10 +2717,12 @@ def render_interactive_preview(question: Dict[str, Any], preview_key: str) -> No
     if prior and prior.get("answer") == answer:
         result = prior["evaluation"]
         score = round(float(result.get("score") or 0) * 100)
-        if result.get("is_correct"):
+        if result.get("is_correct") is True:
             st.success(f"Réponse correcte · {score} %")
-        else:
+        elif result.get("is_correct") is False:
             st.warning(f"Résultat de l'essai : {score} % des éléments corrects")
+        else:
+            st.info("Arbitrage enregistré pour cet essai : correction pédagogique différée.")
         if result.get("selected_feedback"):
             st.write(result["selected_feedback"])
         if result.get("correct_feedback"):

@@ -42,11 +42,13 @@ def test_trainer_can_play_branching_preview_without_database_writes(monkeypatch,
     monkeypatch.setenv("SQLITE_DB_PATH", str(tmp_path / "trainer-lot3.db"))
     monkeypatch.setenv("QUIZ_TRAINER_PASSWORD", "test-trainer-only")
     monkeypatch.setenv("QUIZ_LEARNER_CODE", "TEST-LEARNER-ONLY")
+    from utils.database import init_quiz_history_db
     from utils.learner_db import init_learner_db
     from utils.question_bank import init_question_bank_db
     from utils.session_db import init_session_db
     # The UI smoke test and the bank round-trip use independent SQLite files.
     # Reinitialize the schema caches before opening this fresh disposable DB.
+    init_quiz_history_db.cache_clear()
     init_learner_db.cache_clear()
     init_question_bank_db.cache_clear()
     init_session_db.cache_clear()

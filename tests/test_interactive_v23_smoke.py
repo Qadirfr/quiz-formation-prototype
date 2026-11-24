@@ -20,4 +20,4 @@ def test_trainer_can_preview_and_download_interactive_templates(monkeypatch, tmp
     enter.click().run()
     assert not at.exception, [e.message for e in at.exception]
     assert any(t.value == "Espace formateur" for t in at.title)
-    assert any("Modèles simplifiés" in m.value for m in at.markdown)
+    assert any("Modèles d\u0027import des exercices interactifs" in m.value for m in at.markdown)

@@ -189,11 +189,8 @@ def render_scenario(question: dict[str, Any], key: str) -> dict[str, Any]:
         + ("Parcours terminé" if progress["complete"] else "Choisis une action pour poursuivre")
     )
     for index, past in enumerate(progress["history"], start=1):
-        with st.expander(
-            f"Décision {index} — {past['choice']['label']}", expanded=False
-        ):
-            st.markdown(past["node"]["prompt"])
-            st.info("Conséquence : " + past["choice"]["consequence"])
+        st.markdown(f"**Décision {index} — {past['choice']['label']}**")
+        st.info("Conséquence : " + past["choice"]["consequence"])
     if progress["complete"]:
         st.success("Ton parcours est terminé. Tu peux valider ou recommencer.")
     else:

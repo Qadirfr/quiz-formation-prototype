@@ -3923,7 +3923,10 @@ Pour une image, renseigne `media_url`, puis éventuellement `media_caption` et `
         with meta1:
             manual_training_scope = st.selectbox(
                 "Formation",
-                ["CDPO", "Naturalisation civique", "Autre"],
+                [
+                    "CDPO", "SSI", "Audit SI", "Audit IA", "Conformité",
+                    "Contrôle interne", "Naturalisation civique", "Autre",
+                ],
                 index=0,
                 key="manual_training_scope",
             )

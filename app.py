@@ -44,6 +44,13 @@ from utils.interactive_lot2 import (
     render_word_bank_tokens,
     usable_word_bank,
 )
+from utils.interactive_scenarios import (
+    evaluate_scenario, is_scenario_complete, render_scenario, validate_scenario,
+)
+from utils.scenario_templates import (
+    example_rows as scenario_example_rows,
+    rows_to_scenario_quiz, scenario_csv_bytes, scenario_xlsx_bytes,
+)
 from utils.export_utils import quiz_to_csv_bytes, quiz_to_json_bytes, quiz_to_markdown, quiz_to_markdown_bytes
 from utils.file_reader import clean_training_text, read_uploaded_file
 from utils.learner_db import (
@@ -1373,6 +1380,9 @@ def evaluate_answer(question: Dict[str, Any], user_answer: Any) -> Dict[str, Any
     options = question.get("options") or []
     correct_answer = question.get("correct_answer", "")
 
+    if qtype == "branching_scenario":
+        return evaluate_scenario(question, user_answer)
+
     if qtype in ["single_choice", "true_false"]:
         is_ok = is_single_choice_correct(str(user_answer), str(correct_answer), options)
         user_label, user_text = resolve_answer_label_and_text(user_answer, options)
@@ -2553,7 +2563,21 @@ def render_creator_question(question: Dict[str, Any], index: int) -> None:
         pairs = question.get("pairs") or []
         options = question.get("options") or []
 
-        if is_point_allocation_question(question):
+        if qtype == "branching_scenario":
+            st.markdown("**Scénario à décisions successives**")
+            st.caption(
+                f"{len(question.get('scenario_nodes') or [])} étapes possibles. "
+                "Le chemin dépend des décisions de l'apprenant."
+            )
+            for node in question.get("scenario_nodes") or []:
+                st.markdown(f"**{node.get('id')} — {node.get('prompt')}**")
+                for choice in node.get("choices") or []:
+                    st.write(
+                        f"{choice.get('id')}. {choice.get('label')} "
+                        f"→ {choice.get('next')} — score {choice.get('score')}"
+                    )
+                    st.caption("Conséquence : " + str(choice.get("consequence") or ""))
+        elif is_point_allocation_question(question):
             items = extract_activity_items(question)
             st.markdown("**Répartition de points**")
             st.caption(
@@ -2647,6 +2671,8 @@ def render_creator_question(question: Dict[str, Any], index: int) -> None:
 
 def has_interactive_card_activity(question: Dict[str, Any]) -> bool:
     """Question widgets requiring immediate reruns cannot be nested in st.form."""
+    if question.get("type") == "branching_scenario":
+        return True
     if is_priority_ranking_question(question):
         return can_render_ordering(extract_activity_items(question))
     if is_point_allocation_question(question):
@@ -2671,7 +2697,11 @@ def render_interactive_preview(question: Dict[str, Any], preview_key: str) -> No
         f"Sous-domaine : {question.get('subdomain') or '-'}"
     )
     render_question_context_and_media(question)
-    if is_priority_ranking_question(question):
+    if question.get("type") == "branching_scenario":
+        st.markdown(question.get("question") or "")
+        answer = render_scenario(question, f"{preview_key}_scenario")
+        is_complete = is_scenario_complete(question, answer)
+    elif is_priority_ranking_question(question):
         st.markdown(structured_activity_prompt_text(question))
         answer = render_priority_cards(
             question, extract_activity_items(question), f"{preview_key}_priority"
@@ -2756,6 +2786,11 @@ def render_test_question(
 
     options = question.get("options") or []
     pairs = question.get("pairs") or []
+
+    if qtype == "branching_scenario":
+        return render_scenario(
+            question, f"attempt_{attempt_id or 'preview'}_question_{index}_scenario"
+        )
 
     if is_priority_ranking_question(question) and can_render_ordering(
         extract_activity_items(question)
@@ -3017,6 +3052,9 @@ def render_session_question(
     pairs = question.get("pairs") or []
     prefix = f"session_{session_id}_{index}"
     lot2_key = f"session_{session_id}_participant_{participant_id or 'preview'}_question_{index}"
+
+    if qtype == "branching_scenario":
+        return render_scenario(question, f"{lot2_key}_scenario")
 
     if is_priority_ranking_question(question) and can_render_ordering(
         extract_activity_items(question)
@@ -3294,6 +3332,7 @@ def _manual_type_label(value: str) -> str:
         "self_assessment": "Auto-positionnement",
         "point_allocation": "Répartition de points",
         "priority_ranking": "Priorisation / classement",
+        "branching_scenario": "Scénario à décisions successives",
         "short_answer": "Réponse libre courte",
         "long_answer": "Réponse rédigée longue",
     }
@@ -3783,6 +3822,7 @@ Pour une image, renseigne `media_url`, puis éventuellement `media_caption` et `
                     "matching",
                     "fill_blank",
                     "self_assessment",
+                    "branching_scenario",
                 ],
                 format_func=_manual_type_label,
                 key="manual_question_type",

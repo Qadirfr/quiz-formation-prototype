@@ -3489,6 +3489,56 @@ def trainer_app() -> None:
         st.subheader("Importer ou coller un support de formation")
 
         with st.expander(
+            "Lot 3 — Scénarios à décisions successives · aperçu apprenti sans enregistrer",
+            expanded=False,
+        ):
+            st.write(
+                "Choisis un cas. Tes décisions modifient réellement la suite "
+                "de l'histoire. Les conséquences apparaissent à chaque étape. "
+                "L'aperçu n'enregistre aucune donnée dans Supabase."
+            )
+            sample_scenarios = rows_to_scenario_quiz(
+                scenario_example_rows(), filename="scenarios_exemples.xlsx"
+            )["questions"]
+            scenario_index = st.selectbox(
+                "Choisir une mise en situation",
+                options=list(range(len(sample_scenarios))),
+                format_func=lambda i: (
+                    f"{sample_scenarios[i].get('domain')} — "
+                    f"{sample_scenarios[i].get('question')}"
+                ),
+                key="trainer_scenario_demo_index",
+            )
+            render_interactive_preview(
+                sample_scenarios[scenario_index],
+                f"trainer_scenario_demo_{scenario_index}",
+            )
+            c1, c2 = st.columns(2)
+            with c1:
+                st.download_button(
+                    "Télécharger le modèle Excel — scénarios",
+                    data=scenario_xlsx_bytes(),
+                    file_name="modele_scenarios_embranchements.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key="trainer_scenario_model_xlsx",
+                    width="stretch",
+                )
+            with c2:
+                st.download_button(
+                    "Télécharger le modèle CSV — scénarios",
+                    data=scenario_csv_bytes(),
+                    file_name="modele_scenarios_embranchements.csv",
+                    mime="text/csv",
+                    key="trainer_scenario_model_csv",
+                    width="stretch",
+                )
+            st.caption(
+                "Une ligne du modèle correspond à une décision. "
+                "Plusieurs lignes ayant le même scenario_id forment un scénario. "
+                "Pour alimenter la banque, utilise l'import industriel juste en dessous."
+            )
+
+        with st.expander(
             "Ateliers interactifs — lots 1 et 2 · aperçu apprenti sans enregistrer",
             expanded=False,
         ):
@@ -3591,7 +3641,9 @@ Pour une image, renseigne `media_url`, puis éventuellement `media_caption` et `
                     hide_index=True,
                 )
 
-            st.markdown("#### Modèles simplifiés — cartes interactives V24")
+            st.markdown("#### Modèles d'import des exercices interactifs")
+            st.caption("Pour les scénarios à embranchements, utilise le modèle spécifique du lot 3 dans l'aperçu ci-dessus. Les modèles ci-dessous concernent les lots 1 et 2.")
+            st.markdown("**Lots 1 et 2 — cartes et étiquettes**")
             st.caption(
                 "Une ligne = une question. Remplis domain, subdomain, type, question, "
                 "item_1... et correct_order pour un classement, ou pair_1_left/right... "

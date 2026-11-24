@@ -82,3 +82,16 @@ def test_trainer_can_play_branching_preview_without_database_writes(monkeypatch,
     ).click().run()
     assert not at.exception, [e.message for e in at.exception]
     assert any("Réponse correcte" in item.message for item in at.success)
+
+    # The guided authoring form must also render without breaking older forms.
+    editor_type = next(
+        value for value in at.selectbox if value.key == "manual_question_type"
+    )
+    editor_type.select("branching_scenario").run()
+    assert not at.exception, [e.message for e in at.exception]
+    assert any(
+        field.key == "manual_scenario_node_count" for field in at.number_input
+    )
+    assert any(
+        field.key == "manual_scenario_S1_A_score" for field in at.slider
+    )

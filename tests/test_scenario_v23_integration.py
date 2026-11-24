@@ -75,13 +75,13 @@ def test_trainer_can_play_branching_preview_without_database_writes(monkeypatch,
     )
     second.click().run()
     assert not at.exception, [e.message for e in at.exception]
-    assert any("parcours est terminé" in s.message for s in at.success)
+    assert any("parcours est terminé" in s.value for s in at.success)
     next(
         b for b in at.button
         if b.key == "trainer_scenario_demo_0_validate"
     ).click().run()
     assert not at.exception, [e.message for e in at.exception]
-    assert any("Réponse correcte" in item.message for item in at.success)
+    assert any("Réponse correcte" in item.value for item in at.success)
 
     # The guided authoring form must also render without breaking older forms.
     editor_type = next(

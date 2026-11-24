@@ -954,6 +954,8 @@ SELF_ASSESSMENT_TYPES = {
 
 def is_self_assessment_question(question: Dict[str, Any]) -> bool:
     qtype = normalize_answer(question.get("type", "")).replace(" ", "_")
+    if qtype == "branching_scenario":
+        return False
     if qtype in SELF_ASSESSMENT_TYPES:
         return True
 
@@ -1049,6 +1051,8 @@ FILL_BLANK_TYPES = {
 
 def is_fill_blank_question(question: Dict[str, Any]) -> bool:
     qtype = normalize_answer(question.get("type", "")).replace(" ", "_")
+    if qtype == "branching_scenario":
+        return False
     if qtype in FILL_BLANK_TYPES:
         return True
 

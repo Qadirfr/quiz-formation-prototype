@@ -3339,6 +3339,97 @@ def _manual_type_label(value: str) -> str:
     return labels.get(value, value)
 
 
+def render_manual_scenario_editor() -> Dict[str, Any]:
+    """Guide trainers through three or more genuine decision branches."""
+    sample = rows_to_scenario_quiz(scenario_example_rows())["questions"][0]
+    sample_nodes = sample["scenario_nodes"]
+    st.caption(
+        "Un scénario se compose de plusieurs étapes. Chaque choix conduit "
+        "à une autre étape ou termine le parcours. La conséquence apparaît "
+        "immédiatement, le score et la correction seulement à la fin."
+    )
+    count = int(st.number_input(
+        "Nombre d'étapes possibles dans le scénario",
+        min_value=2, max_value=8, value=3, step=1,
+        key="manual_scenario_node_count",
+    ))
+    ids = [f"S{i}" for i in range(1, count + 1)]
+    nodes = []
+    for index, nid in enumerate(ids):
+        example_node = sample_nodes[index] if index < len(sample_nodes) else {}
+        with st.expander(
+            f"Étape {nid} — situation et décisions", expanded=index == 0
+        ):
+            prompt = st.text_area(
+                "Situation présentée à l'apprenti",
+                value=str(example_node.get("prompt") or ""),
+                height=100,
+                key=f"manual_scenario_{nid}_prompt",
+            )
+            number_of_choices = int(st.number_input(
+                f"Nombre de décisions possibles à {nid}",
+                min_value=2, max_value=4, value=2, step=1,
+                key=f"manual_scenario_{nid}_choice_count",
+            ))
+            choices = []
+            for choice_index in range(number_of_choices):
+                cid = chr(65 + choice_index)
+                example_choices = example_node.get("choices") or []
+                example_choice = (
+                    example_choices[choice_index]
+                    if choice_index < len(example_choices) else {}
+                )
+                st.markdown(f"**Décision {cid}**")
+                label = st.text_input(
+                    f"Action proposée — {nid}/{cid}",
+                    value=str(example_choice.get("label") or ""),
+                    key=f"manual_scenario_{nid}_{cid}_label",
+                )
+                targets = ["END"] + [value for value in ids if value != nid]
+                example_target = str(example_choice.get("next") or "END")
+                target = st.selectbox(
+                    f"Si l'apprenti choisit {cid}, où va-t-il ?",
+                    options=targets,
+                    index=targets.index(example_target) if example_target in targets else 0,
+                    format_func=lambda value: (
+                        "Terminer le scénario" if value == "END" else f"Continuer à {value}"
+                    ),
+                    key=f"manual_scenario_{nid}_{cid}_next",
+                )
+                consequence = st.text_area(
+                    f"Conséquence visible après {nid}/{cid}",
+                    value=str(example_choice.get("consequence") or ""),
+                    height=75,
+                    key=f"manual_scenario_{nid}_{cid}_consequence",
+                )
+                default_score = int(round(float(example_choice.get("score") or 0) * 100))
+                score = st.slider(
+                    f"Pertinence pédagogique de cette décision — {nid}/{cid} (%)",
+                    0, 100, default_score, 5,
+                    key=f"manual_scenario_{nid}_{cid}_score",
+                ) / 100.0
+                rationale = st.text_area(
+                    f"Explication de correction — {nid}/{cid}",
+                    value=str(example_choice.get("rationale") or ""),
+                    height=70,
+                    key=f"manual_scenario_{nid}_{cid}_rationale",
+                )
+                choices.append({
+                    "id": cid, "label": label, "next": target,
+                    "consequence": consequence, "score": score,
+                    "rationale": rationale,
+                })
+            nodes.append({"id": nid, "prompt": prompt, "choices": choices})
+    st.caption(
+        "Le contrôle refusera les étapes inaccessibles, les boucles et les destinations "
+        "inexistantes. Une question peut comporter plusieurs chemins de durée différente."
+    )
+    return {
+        "scenario_start": "S1",
+        "scenario_nodes": nodes,
+    }
+
+
 def trainer_app() -> None:
     st.title("Espace formateur")
     st.caption("Création, import enrichi, sauvegarde, restitutions, résultats et exports.")
@@ -4155,6 +4246,9 @@ Pour une image, renseigne `media_url`, puis éventuellement `media_caption` et `
             type_payload["pairs"] = _manual_pairs(pair_lines)
             type_payload["correct_answer"] = "Voir les paires de correction."
 
+        elif manual_type == "branching_scenario":
+            type_payload.update(render_manual_scenario_editor())
+
         elif manual_type == "fill_blank":
             st.caption(
                 "Utilise [...] pour chaque trou. Tu peux proposer des étiquettes "
@@ -4287,6 +4381,11 @@ Pour une image, renseigne `media_url`, puis éventuellement `media_caption` et `
                             "Les étiquettes doivent inclure chaque réponse attendue "
                             "autant de fois que nécessaire."
                         )
+
+                if manual_type == "branching_scenario":
+                    scenario_issues = validate_scenario(type_payload)
+                    if scenario_issues:
+                        raise ValueError(" / ".join(scenario_issues[:4]))
 
                 if manual_type == "long_answer" and not type_payload.get("evaluation_criteria"):
                     raise ValueError(

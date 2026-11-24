@@ -46,7 +46,7 @@ def test_paths_do_not_converge_accidentally_and_show_different_outcomes():
     assert a["valid"] and a["complete"] and b["valid"] and b["complete"]
     assert a["history"][0]["choice"]["next"] == "S2"
     assert b["history"][0]["choice"]["next"] == "S3"
-    assert "traces" in a["history"][1]["choice"]["consequence"]
+    assert "éléments probants" in a["history"][1]["choice"]["consequence"]
     assert "corrigée" in b["history"][1]["choice"]["consequence"]
     assert evaluate_scenario(q, {"path": good})["score"] == 1.0
     assert evaluate_scenario(q, {"path": recovery})["score"] == 0.45

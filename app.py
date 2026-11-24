@@ -860,7 +860,7 @@ def is_ordering_type(qtype: Any) -> bool:
 
 def is_ordering_question(question: Dict[str, Any]) -> bool:
     qtype = normalize_answer(question.get("type", "")).replace(" ", "_")
-    if qtype in {"priority_ranking", "point_allocation"}:
+    if qtype in {"priority_ranking", "point_allocation", "branching_scenario"}:
         return False
     if is_ordering_type(question.get("type", "")):
         return True

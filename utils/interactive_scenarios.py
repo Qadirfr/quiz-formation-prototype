@@ -17,7 +17,7 @@ NODE_ID = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{0,30}$")
 
 def _nodes(question: dict[str, Any]) -> dict[str, dict[str, Any]]:
     return {
-        str(n.get("id")): n
+        str(n.get("id")).strip(): n
         for n in (question.get("scenario_nodes") or [])
         if isinstance(n, dict) and isinstance(n.get("id"), str)
     }
@@ -41,7 +41,7 @@ def validate_scenario(question: dict[str, Any]) -> list[str]:
         errors.append("L'étape de départ n'existe pas.")
     edges: dict[str, list[str]] = {nid: [] for nid in ids}
     for node in nodes:
-        nid = str(node.get("id") or "")
+        nid = str(node.get("id") or "").strip()
         if not str(node.get("prompt") or "").strip():
             errors.append(f"Étape {nid} : situation/consigne manquante.")
         choices = node.get("choices")
@@ -55,7 +55,7 @@ def validate_scenario(question: dict[str, Any]) -> list[str]:
             if not isinstance(choice, dict):
                 errors.append(f"Étape {nid} : décision mal structurée.")
                 continue
-            cid = str(choice.get("id") or "")
+            cid = str(choice.get("id") or "").strip()
             if not str(choice.get("label") or "").strip():
                 errors.append(f"Étape {nid}/{cid} : texte de décision manquant.")
             if not str(choice.get("consequence") or "").strip():

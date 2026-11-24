@@ -56,3 +56,10 @@ Fonctions incluses :
 ## Ateliers interactifs — lots 1 et 2 (tests dans V23)
 
 L'application inclut les cartes d'ordonnancement et d'appariement (lot 1), ainsi que le classement des priorités par cartes, les textes à trous avec étiquettes et les curseurs de répartition de points (lot 2). L'aperçu dans l'espace formateur et l'import Excel/CSV des cinq formats réutilisent la banque actuelle. Les classements et budgets restent soumis à une correction différée. Voir [la notice des ateliers interactifs](docs/ATELIERS_INTERACTIFS_V24.md). La version historique et les données existantes ne sont pas migrées.
+
+
+## Lot 3 — Scénarios à décisions successives
+
+Deux cas de démonstration sont disponibles dans l'onglet **1. Source** de V23 : incident SSI et assistant RAG pour les réclamations. Le formateur peut créer des parcours par étapes dans **2. Création manuelle**, ou importer un modèle **Excel / CSV** sans cellule JSON. Une ligne contient une décision. Les décisions peuvent conduire à des étapes différentes, avec conséquence, barème et explication. La passation fonctionne en quiz autonome et session dirigée, avec un corrigé différé. Aucun nouveau stockage ni aucune migration ne sont nécessaires.
+
+**Notice détaillée :** [Scénarios à embranchements — lot 3](docs/SCENARIOS_EMBRANCHEMENTS_LOT3.md).

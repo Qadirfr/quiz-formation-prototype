@@ -44,6 +44,13 @@ from utils.interactive_lot2 import (
     render_word_bank_tokens,
     usable_word_bank,
 )
+from utils.interactive_scenarios import (
+    evaluate_scenario, is_scenario_complete, render_scenario, validate_scenario,
+)
+from utils.scenario_templates import (
+    example_rows as scenario_example_rows,
+    rows_to_scenario_quiz, scenario_csv_bytes, scenario_xlsx_bytes,
+)
 from utils.export_utils import quiz_to_csv_bytes, quiz_to_json_bytes, quiz_to_markdown, quiz_to_markdown_bytes
 from utils.file_reader import clean_training_text, read_uploaded_file
 from utils.learner_db import (
@@ -853,7 +860,7 @@ def is_ordering_type(qtype: Any) -> bool:
 
 def is_ordering_question(question: Dict[str, Any]) -> bool:
     qtype = normalize_answer(question.get("type", "")).replace(" ", "_")
-    if qtype in {"priority_ranking", "point_allocation"}:
+    if qtype in {"priority_ranking", "point_allocation", "branching_scenario"}:
         return False
     if is_ordering_type(question.get("type", "")):
         return True
@@ -947,6 +954,8 @@ SELF_ASSESSMENT_TYPES = {
 
 def is_self_assessment_question(question: Dict[str, Any]) -> bool:
     qtype = normalize_answer(question.get("type", "")).replace(" ", "_")
+    if qtype == "branching_scenario":
+        return False
     if qtype in SELF_ASSESSMENT_TYPES:
         return True
 
@@ -1042,6 +1051,8 @@ FILL_BLANK_TYPES = {
 
 def is_fill_blank_question(question: Dict[str, Any]) -> bool:
     qtype = normalize_answer(question.get("type", "")).replace(" ", "_")
+    if qtype == "branching_scenario":
+        return False
     if qtype in FILL_BLANK_TYPES:
         return True
 
@@ -1372,6 +1383,9 @@ def evaluate_answer(question: Dict[str, Any], user_answer: Any) -> Dict[str, Any
     qtype = question.get("type", "")
     options = question.get("options") or []
     correct_answer = question.get("correct_answer", "")
+
+    if qtype == "branching_scenario":
+        return evaluate_scenario(question, user_answer)
 
     if qtype in ["single_choice", "true_false"]:
         is_ok = is_single_choice_correct(str(user_answer), str(correct_answer), options)
@@ -2553,7 +2567,21 @@ def render_creator_question(question: Dict[str, Any], index: int) -> None:
         pairs = question.get("pairs") or []
         options = question.get("options") or []
 
-        if is_point_allocation_question(question):
+        if qtype == "branching_scenario":
+            st.markdown("**Scénario à décisions successives**")
+            st.caption(
+                f"{len(question.get('scenario_nodes') or [])} étapes possibles. "
+                "Le chemin dépend des décisions de l'apprenant."
+            )
+            for node in question.get("scenario_nodes") or []:
+                st.markdown(f"**{node.get('id')} — {node.get('prompt')}**")
+                for choice in node.get("choices") or []:
+                    st.write(
+                        f"{choice.get('id')}. {choice.get('label')} "
+                        f"→ {choice.get('next')} — score {choice.get('score')}"
+                    )
+                    st.caption("Conséquence : " + str(choice.get("consequence") or ""))
+        elif is_point_allocation_question(question):
             items = extract_activity_items(question)
             st.markdown("**Répartition de points**")
             st.caption(
@@ -2647,6 +2675,8 @@ def render_creator_question(question: Dict[str, Any], index: int) -> None:
 
 def has_interactive_card_activity(question: Dict[str, Any]) -> bool:
     """Question widgets requiring immediate reruns cannot be nested in st.form."""
+    if question.get("type") == "branching_scenario":
+        return True
     if is_priority_ranking_question(question):
         return can_render_ordering(extract_activity_items(question))
     if is_point_allocation_question(question):
@@ -2671,7 +2701,11 @@ def render_interactive_preview(question: Dict[str, Any], preview_key: str) -> No
         f"Sous-domaine : {question.get('subdomain') or '-'}"
     )
     render_question_context_and_media(question)
-    if is_priority_ranking_question(question):
+    if question.get("type") == "branching_scenario":
+        st.markdown(question.get("question") or "")
+        answer = render_scenario(question, f"{preview_key}_scenario")
+        is_complete = is_scenario_complete(question, answer)
+    elif is_priority_ranking_question(question):
         st.markdown(structured_activity_prompt_text(question))
         answer = render_priority_cards(
             question, extract_activity_items(question), f"{preview_key}_priority"
@@ -2756,6 +2790,11 @@ def render_test_question(
 
     options = question.get("options") or []
     pairs = question.get("pairs") or []
+
+    if qtype == "branching_scenario":
+        return render_scenario(
+            question, f"attempt_{attempt_id or 'preview'}_question_{index}_scenario"
+        )
 
     if is_priority_ranking_question(question) and can_render_ordering(
         extract_activity_items(question)
@@ -3017,6 +3056,9 @@ def render_session_question(
     pairs = question.get("pairs") or []
     prefix = f"session_{session_id}_{index}"
     lot2_key = f"session_{session_id}_participant_{participant_id or 'preview'}_question_{index}"
+
+    if qtype == "branching_scenario":
+        return render_scenario(question, f"{lot2_key}_scenario")
 
     if is_priority_ranking_question(question) and can_render_ordering(
         extract_activity_items(question)
@@ -3294,10 +3336,102 @@ def _manual_type_label(value: str) -> str:
         "self_assessment": "Auto-positionnement",
         "point_allocation": "Répartition de points",
         "priority_ranking": "Priorisation / classement",
+        "branching_scenario": "Scénario à décisions successives",
         "short_answer": "Réponse libre courte",
         "long_answer": "Réponse rédigée longue",
     }
     return labels.get(value, value)
+
+
+def render_manual_scenario_editor() -> Dict[str, Any]:
+    """Guide trainers through three or more genuine decision branches."""
+    sample = rows_to_scenario_quiz(scenario_example_rows())["questions"][0]
+    sample_nodes = sample["scenario_nodes"]
+    st.caption(
+        "Un scénario se compose de plusieurs étapes. Chaque choix conduit "
+        "à une autre étape ou termine le parcours. La conséquence apparaît "
+        "immédiatement, le score et la correction seulement à la fin."
+    )
+    count = int(st.number_input(
+        "Nombre d'étapes possibles dans le scénario",
+        min_value=2, max_value=8, value=3, step=1,
+        key="manual_scenario_node_count",
+    ))
+    ids = [f"S{i}" for i in range(1, count + 1)]
+    nodes = []
+    for index, nid in enumerate(ids):
+        example_node = sample_nodes[index] if index < len(sample_nodes) else {}
+        with st.expander(
+            f"Étape {nid} — situation et décisions", expanded=index == 0
+        ):
+            prompt = st.text_area(
+                "Situation présentée à l'apprenti",
+                value=str(example_node.get("prompt") or ""),
+                height=100,
+                key=f"manual_scenario_{nid}_prompt",
+            )
+            number_of_choices = int(st.number_input(
+                f"Nombre de décisions possibles à {nid}",
+                min_value=2, max_value=4, value=2, step=1,
+                key=f"manual_scenario_{nid}_choice_count",
+            ))
+            choices = []
+            for choice_index in range(number_of_choices):
+                cid = chr(65 + choice_index)
+                example_choices = example_node.get("choices") or []
+                example_choice = (
+                    example_choices[choice_index]
+                    if choice_index < len(example_choices) else {}
+                )
+                st.markdown(f"**Décision {cid}**")
+                label = st.text_input(
+                    f"Action proposée — {nid}/{cid}",
+                    value=str(example_choice.get("label") or ""),
+                    key=f"manual_scenario_{nid}_{cid}_label",
+                )
+                targets = ["END"] + [value for value in ids if value != nid]
+                example_target = str(example_choice.get("next") or "END")
+                target = st.selectbox(
+                    f"Si l'apprenti choisit {cid}, où va-t-il ?",
+                    options=targets,
+                    index=targets.index(example_target) if example_target in targets else 0,
+                    format_func=lambda value: (
+                        "Terminer le scénario" if value == "END" else f"Continuer à {value}"
+                    ),
+                    key=f"manual_scenario_{nid}_{cid}_next",
+                )
+                consequence = st.text_area(
+                    f"Conséquence visible après {nid}/{cid}",
+                    value=str(example_choice.get("consequence") or ""),
+                    height=75,
+                    key=f"manual_scenario_{nid}_{cid}_consequence",
+                )
+                default_score = int(round(float(example_choice.get("score") or 0) * 100))
+                score = st.slider(
+                    f"Pertinence pédagogique de cette décision — {nid}/{cid} (%)",
+                    0, 100, default_score, 5,
+                    key=f"manual_scenario_{nid}_{cid}_score",
+                ) / 100.0
+                rationale = st.text_area(
+                    f"Explication de correction — {nid}/{cid}",
+                    value=str(example_choice.get("rationale") or ""),
+                    height=70,
+                    key=f"manual_scenario_{nid}_{cid}_rationale",
+                )
+                choices.append({
+                    "id": cid, "label": label, "next": target,
+                    "consequence": consequence, "score": score,
+                    "rationale": rationale,
+                })
+            nodes.append({"id": nid, "prompt": prompt, "choices": choices})
+    st.caption(
+        "Le contrôle refusera les étapes inaccessibles, les boucles et les destinations "
+        "inexistantes. Une question peut comporter plusieurs chemins de durée différente."
+    )
+    return {
+        "scenario_start": "S1",
+        "scenario_nodes": nodes,
+    }
 
 
 def trainer_app() -> None:
@@ -3357,6 +3491,56 @@ def trainer_app() -> None:
 
     with tab_input:
         st.subheader("Importer ou coller un support de formation")
+
+        with st.expander(
+            "Lot 3 — Scénarios à décisions successives · aperçu apprenti sans enregistrer",
+            expanded=False,
+        ):
+            st.write(
+                "Choisis un cas. Tes décisions modifient réellement la suite "
+                "de l'histoire. Les conséquences apparaissent à chaque étape. "
+                "L'aperçu n'enregistre aucune donnée dans Supabase."
+            )
+            sample_scenarios = rows_to_scenario_quiz(
+                scenario_example_rows(), filename="scenarios_exemples.xlsx"
+            )["questions"]
+            scenario_index = st.selectbox(
+                "Choisir une mise en situation",
+                options=list(range(len(sample_scenarios))),
+                format_func=lambda i: (
+                    f"{sample_scenarios[i].get('domain')} — "
+                    f"{sample_scenarios[i].get('question')}"
+                ),
+                key="trainer_scenario_demo_index",
+            )
+            render_interactive_preview(
+                sample_scenarios[scenario_index],
+                f"trainer_scenario_demo_{scenario_index}",
+            )
+            c1, c2 = st.columns(2)
+            with c1:
+                st.download_button(
+                    "Télécharger le modèle Excel — scénarios",
+                    data=scenario_xlsx_bytes(),
+                    file_name="modele_scenarios_embranchements.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key="trainer_scenario_model_xlsx",
+                    width="stretch",
+                )
+            with c2:
+                st.download_button(
+                    "Télécharger le modèle CSV — scénarios",
+                    data=scenario_csv_bytes(),
+                    file_name="modele_scenarios_embranchements.csv",
+                    mime="text/csv",
+                    key="trainer_scenario_model_csv",
+                    width="stretch",
+                )
+            st.caption(
+                "Une ligne du modèle correspond à une décision. "
+                "Plusieurs lignes ayant le même scenario_id forment un scénario. "
+                "Pour alimenter la banque, utilise l'import industriel juste en dessous."
+            )
 
         with st.expander(
             "Ateliers interactifs — lots 1 et 2 · aperçu apprenti sans enregistrer",
@@ -3461,7 +3645,9 @@ Pour une image, renseigne `media_url`, puis éventuellement `media_caption` et `
                     hide_index=True,
                 )
 
-            st.markdown("#### Modèles simplifiés — cartes interactives V24")
+            st.markdown("#### Modèles d'import des exercices interactifs")
+            st.caption("Pour les scénarios à embranchements, utilise le modèle spécifique du lot 3 dans l'aperçu ci-dessus. Les modèles ci-dessous concernent les lots 1 et 2.")
+            st.markdown("**Lots 1 et 2 — cartes et étiquettes**")
             st.caption(
                 "Une ligne = une question. Remplis domain, subdomain, type, question, "
                 "item_1... et correct_order pour un classement, ou pair_1_left/right... "
@@ -3741,7 +3927,10 @@ Pour une image, renseigne `media_url`, puis éventuellement `media_caption` et `
         with meta1:
             manual_training_scope = st.selectbox(
                 "Formation",
-                ["CDPO", "Naturalisation civique", "Autre"],
+                [
+                    "CDPO", "SSI", "Audit SI", "Audit IA", "Conformité",
+                    "Contrôle interne", "Naturalisation civique", "Autre",
+                ],
                 index=0,
                 key="manual_training_scope",
             )
@@ -3783,6 +3972,7 @@ Pour une image, renseigne `media_url`, puis éventuellement `media_caption` et `
                     "matching",
                     "fill_blank",
                     "self_assessment",
+                    "branching_scenario",
                 ],
                 format_func=_manual_type_label,
                 key="manual_question_type",
@@ -4115,6 +4305,9 @@ Pour une image, renseigne `media_url`, puis éventuellement `media_caption` et `
             type_payload["pairs"] = _manual_pairs(pair_lines)
             type_payload["correct_answer"] = "Voir les paires de correction."
 
+        elif manual_type == "branching_scenario":
+            type_payload.update(render_manual_scenario_editor())
+
         elif manual_type == "fill_blank":
             st.caption(
                 "Utilise [...] pour chaque trou. Tu peux proposer des étiquettes "
@@ -4247,6 +4440,11 @@ Pour une image, renseigne `media_url`, puis éventuellement `media_caption` et `
                             "Les étiquettes doivent inclure chaque réponse attendue "
                             "autant de fois que nécessaire."
                         )
+
+                if manual_type == "branching_scenario":
+                    scenario_issues = validate_scenario(type_payload)
+                    if scenario_issues:
+                        raise ValueError(" / ".join(scenario_issues[:4]))
 
                 if manual_type == "long_answer" and not type_payload.get("evaluation_criteria"):
                     raise ValueError(

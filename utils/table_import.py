@@ -9,6 +9,8 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 from utils.interactive_lot2 import parse_word_bank, usable_word_bank
+from utils.interactive_scenarios import validate_scenario
+from utils.scenario_templates import rows_to_scenario_quiz
 
 
 TYPE_MAP = {
@@ -52,6 +54,9 @@ TYPE_MAP = {
     "prioritization": "priority_ranking",
     "priorisation": "priority_ranking",
     "long_answer": "long_answer",
+    "branching_scenario": "branching_scenario",
+    "scenario_interactif": "branching_scenario",
+    "scenario_a_embranchements": "branching_scenario",
     "essay": "long_answer",
     "essay_response": "long_answer",
     "open_answer": "long_answer",
@@ -137,7 +142,8 @@ def read_xlsx_rows(uploaded_file) -> List[Dict[str, Any]]:
     wb = load_workbook(uploaded_file, data_only=True)
     # The interactive Excel model contains a separate user guide.
     # Do not import the guide if the author last saved that sheet as active.
-    ws = wb["Questions"] if "Questions" in wb.sheetnames else wb.active
+    ws = (wb["Questions"] if "Questions" in wb.sheetnames else
+          wb["Scenarios"] if "Scenarios" in wb.sheetnames else wb.active)
 
     values = list(ws.iter_rows(values_only=True))
     if not values:
@@ -711,6 +717,8 @@ def read_quiz_table(uploaded_file) -> Dict[str, Any]:
     else:
         raise ValueError("Format non supporte. Utilise CSV, XLSX ou JSON.")
 
+    if rows and {"scenario_id", "node_id", "choice_id", "next_node"}.issubset(rows[0]):
+        return rows_to_scenario_quiz(rows, uploaded_file.name)
     return rows_to_quiz(rows, uploaded_file.name)
 
 
@@ -863,6 +871,9 @@ def validate_imported_quiz(quiz: Dict[str, Any]) -> Dict[str, Any]:
                     q_errors.append(
                         "Priorisation Top N : top_n doit etre compris entre 1 et le nombre d'elements."
                     )
+
+        elif qtype == "branching_scenario":
+            q_errors.extend(validate_scenario(question))
 
         elif qtype == "long_answer":
             if not (

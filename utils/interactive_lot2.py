@@ -220,6 +220,9 @@ def render_point_budget(
 def is_complete_decision(question: dict[str, Any], answer: Any) -> bool:
     """Protect live controls from premature submissions."""
     qtype = str(question.get("type") or "")
+    if qtype == "branching_scenario":
+        from utils.interactive_scenarios import is_scenario_complete
+        return is_scenario_complete(question, answer)
     if qtype == "priority_ranking":
         if not isinstance(answer, dict):
             return False

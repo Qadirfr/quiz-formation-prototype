@@ -2818,6 +2818,11 @@ def render_test_question(
     options = question.get("options") or []
     pairs = question.get("pairs") or []
 
+    if qtype == "image_hotspots":
+        return render_visual(
+            question, f"attempt_{attempt_id or 'preview'}_question_{index}_visual"
+        )
+
     if qtype == "branching_scenario":
         return render_scenario(
             question, f"attempt_{attempt_id or 'preview'}_question_{index}_scenario"
@@ -3083,6 +3088,9 @@ def render_session_question(
     pairs = question.get("pairs") or []
     prefix = f"session_{session_id}_{index}"
     lot2_key = f"session_{session_id}_participant_{participant_id or 'preview'}_question_{index}"
+
+    if qtype == "image_hotspots":
+        return render_visual(question, f"{lot2_key}_visual")
 
     if qtype == "branching_scenario":
         return render_scenario(question, f"{lot2_key}_scenario")
@@ -3364,6 +3372,7 @@ def _manual_type_label(value: str) -> str:
         "point_allocation": "Répartition de points",
         "priority_ranking": "Priorisation / classement",
         "branching_scenario": "Scénario à décisions successives",
+        "image_hotspots": "Analyse visuelle — zones cliquables",
         "short_answer": "Réponse libre courte",
         "long_answer": "Réponse rédigée longue",
     }
@@ -4000,6 +4009,7 @@ Pour une image, renseigne `media_url`, puis éventuellement `media_caption` et `
                     "fill_blank",
                     "self_assessment",
                     "branching_scenario",
+                    "image_hotspots",
                 ],
                 format_func=_manual_type_label,
                 key="manual_question_type",

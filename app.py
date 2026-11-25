@@ -3529,6 +3529,55 @@ def trainer_app() -> None:
         st.subheader("Importer ou coller un support de formation")
 
         with st.expander(
+            "Lot 4 — Analyse visuelle · cliquer sur les zones d'une image",
+            expanded=False,
+        ):
+            st.write(
+                "Teste le repérage directement sur une image. Les points sont "
+                "mémorisés pendant cet essai seulement, sans écriture en base."
+            )
+            visual_questions = rows_to_visual_quiz(
+                visual_example_rows(), filename="exemples_analyse_visuelle.xlsx"
+            )["questions"]
+            visual_index = st.selectbox(
+                "Choisir un exercice visuel",
+                options=list(range(len(visual_questions))),
+                format_func=lambda i: (
+                    f"{visual_questions[i].get('domain')} — "
+                    f"{visual_questions[i].get('question')}"
+                ),
+                key="trainer_visual_demo_index",
+            )
+            render_interactive_preview(
+                visual_questions[visual_index],
+                f"trainer_visual_demo_{visual_index}",
+            )
+            vc1, vc2 = st.columns(2)
+            with vc1:
+                st.download_button(
+                    "Télécharger le modèle Excel — zones cliquables",
+                    data=visual_xlsx_bytes(),
+                    file_name="modele_analyse_visuelle_zones.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key="trainer_visual_model_xlsx",
+                    width="stretch",
+                )
+            with vc2:
+                st.download_button(
+                    "Télécharger le modèle CSV — zones cliquables",
+                    data=visual_csv_bytes(),
+                    file_name="modele_analyse_visuelle_zones.csv",
+                    mime="text/csv",
+                    key="trainer_visual_model_csv",
+                    width="stretch",
+                )
+            st.caption(
+                "Une ligne du modèle représente une zone. Plusieurs lignes "
+                "portant le même visual_id constituent un exercice. "
+                "L'import industriel existant les ajoute ensuite à la banque."
+            )
+
+        with st.expander(
             "Lot 3 — Scénarios à décisions successives · aperçu apprenti sans enregistrer",
             expanded=False,
         ):
@@ -3682,6 +3731,10 @@ Pour une image, renseigne `media_url`, puis éventuellement `media_caption` et `
                 )
 
             st.markdown("#### Modèles d'import des exercices interactifs")
+            st.caption(
+                "Lot 4 : le modèle spécifique aux zones visuelles est téléchargeable "
+                "depuis la démonstration plus haut. Il est compatible avec le même import."
+            )
             st.caption("Pour les scénarios à embranchements, utilise le modèle spécifique du lot 3 dans l'aperçu ci-dessus. Les modèles ci-dessous concernent les lots 1 et 2.")
             st.markdown("**Lots 1 et 2 — cartes et étiquettes**")
             st.caption(
@@ -4345,6 +4398,29 @@ Pour une image, renseigne `media_url`, puis éventuellement `media_caption` et `
         elif manual_type == "branching_scenario":
             type_payload.update(render_manual_scenario_editor())
 
+        elif manual_type == "image_hotspots":
+            st.caption(
+                "Téléverse une image (ou indique une URL HTTPS) dans la section "
+                "Illustration ci-dessus. Clique sur l'image pour ajouter les "
+                "anomalies à identifier et les éventuels leurres."
+            )
+            visual_src = ""
+            if manual_media_mode == "URL":
+                visual_src = manual_media_url.strip()
+            elif manual_media_mode == "Téléverser une image" and manual_media_upload is not None:
+                try:
+                    visual_src = _manual_image_data_url(manual_media_upload)
+                except ValueError as exc:
+                    st.error(str(exc))
+            if visual_src:
+                source_id = hashlib.sha256(visual_src.encode("utf-8")).hexdigest()[:12]
+                type_payload["hotspots"] = render_hotspot_editor(
+                    visual_src, f"manual_visual_zones_{source_id}"
+                )
+            else:
+                st.info("Choisis d'abord une illustration dans la rubrique Média.")
+                type_payload["hotspots"] = []
+
         elif manual_type == "fill_blank":
             st.caption(
                 "Utilise [...] pour chaque trou. Tu peux proposer des étiquettes "
@@ -4539,6 +4615,10 @@ Pour une image, renseigne `media_url`, puis éventuellement `media_caption` et `
 
                 if media_payload:
                     question_payload["media"] = media_payload
+                if manual_type == "image_hotspots":
+                    issues = validate_visual_question(question_payload)
+                    if issues:
+                        raise ValueError(" / ".join(issues[:4]))
 
                 st.session_state.manual_question_preview = question_payload
                 st.success("Question préparée. Contrôle l'aperçu avant de l'ajouter.")

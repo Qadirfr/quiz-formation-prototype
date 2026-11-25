@@ -63,3 +63,10 @@ L'application inclut les cartes d'ordonnancement et d'appariement (lot 1), ainsi
 Deux cas de démonstration sont disponibles dans l'onglet **1. Source** de V23 : incident SSI et assistant RAG pour les réclamations. Le formateur peut créer des parcours par étapes dans **2. Création manuelle**, ou importer un modèle **Excel / CSV** sans cellule JSON. Une ligne contient une décision. Les décisions peuvent conduire à des étapes différentes, avec conséquence, barème et explication. La passation fonctionne en quiz autonome et session dirigée, avec un corrigé différé. Aucun nouveau stockage ni aucune migration ne sont nécessaires.
 
 **Notice détaillée :** [Scénarios à embranchements — lot 3](docs/SCENARIOS_EMBRANCHEMENTS_LOT3.md).
+
+
+## Lot 4 — Analyse visuelle avec zones cliquables
+
+Le formateur peut maintenant créer des exercices de **repérage sur image**. Dans **1. Source**, deux démonstrations fictives (architecture SSI et parcours RGPD) sont utilisables immédiatement. Dans **2. Création manuelle**, il téléverse une image ou fournit une URL HTTPS puis clique directement pour définir les zones attendues, les leurres et leurs explications. L'import Excel/CSV existant est enrichi par un modèle *une ligne par zone*, avec le domaine, la correction et la remédiation. Les clics sont enregistrés en pourcentages afin de préserver le positionnement sur mobile. Points partiels, annulation, progression et correction après validation sont pris en charge sans nouvelle table de base de données.
+
+Voir [la notice du lot 4](docs/ANALYSE_VISUELLE_LOT4.md).

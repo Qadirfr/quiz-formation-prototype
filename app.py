@@ -51,6 +51,15 @@ from utils.scenario_templates import (
     example_rows as scenario_example_rows,
     rows_to_scenario_quiz, scenario_csv_bytes, scenario_xlsx_bytes,
 )
+from utils.visual_hotspots import (
+    evaluate_visual, image_url as visual_image_url,
+    render_hotspot_editor, render_visual, render_visual_correction,
+    validate_visual_question, visual_complete,
+)
+from utils.visual_templates import (
+    example_rows as visual_example_rows,
+    rows_to_visual_quiz, visual_csv_bytes, visual_xlsx_bytes,
+)
 from utils.export_utils import quiz_to_csv_bytes, quiz_to_json_bytes, quiz_to_markdown, quiz_to_markdown_bytes
 from utils.file_reader import clean_training_text, read_uploaded_file
 from utils.learner_db import (
@@ -860,7 +869,7 @@ def is_ordering_type(qtype: Any) -> bool:
 
 def is_ordering_question(question: Dict[str, Any]) -> bool:
     qtype = normalize_answer(question.get("type", "")).replace(" ", "_")
-    if qtype in {"priority_ranking", "point_allocation", "branching_scenario"}:
+    if qtype in {"priority_ranking", "point_allocation", "branching_scenario", "image_hotspots"}:
         return False
     if is_ordering_type(question.get("type", "")):
         return True
@@ -954,7 +963,7 @@ SELF_ASSESSMENT_TYPES = {
 
 def is_self_assessment_question(question: Dict[str, Any]) -> bool:
     qtype = normalize_answer(question.get("type", "")).replace(" ", "_")
-    if qtype == "branching_scenario":
+    if qtype in {"branching_scenario", "image_hotspots"}:
         return False
     if qtype in SELF_ASSESSMENT_TYPES:
         return True
@@ -1051,7 +1060,7 @@ FILL_BLANK_TYPES = {
 
 def is_fill_blank_question(question: Dict[str, Any]) -> bool:
     qtype = normalize_answer(question.get("type", "")).replace(" ", "_")
-    if qtype == "branching_scenario":
+    if qtype in {"branching_scenario", "image_hotspots"}:
         return False
     if qtype in FILL_BLANK_TYPES:
         return True
@@ -1386,6 +1395,8 @@ def evaluate_answer(question: Dict[str, Any], user_answer: Any) -> Dict[str, Any
 
     if qtype == "branching_scenario":
         return evaluate_scenario(question, user_answer)
+    if qtype == "image_hotspots":
+        return evaluate_visual(question, user_answer)
 
     if qtype in ["single_choice", "true_false"]:
         is_ok = is_single_choice_correct(str(user_answer), str(correct_answer), options)
@@ -2546,7 +2557,8 @@ def render_question_context_and_media(question: Dict[str, Any]) -> None:
                     st.markdown(text)
                 render_question_media(context_media)
 
-    render_question_media(top_media)
+    if question.get("type") != "image_hotspots":
+        render_question_media(top_media)
 
 
 def render_creator_question(question: Dict[str, Any], index: int) -> None:
@@ -2567,7 +2579,16 @@ def render_creator_question(question: Dict[str, Any], index: int) -> None:
         pairs = question.get("pairs") or []
         options = question.get("options") or []
 
-        if qtype == "branching_scenario":
+        if qtype == "image_hotspots":
+            st.markdown("**Repérage sur image — correction formateur**")
+            st.caption("Les zones vertes sont les anomalies attendues.")
+            render_visual_correction(question, {"points": []})
+            for zone in question.get("hotspots") or []:
+                st.write(
+                    f"{zone.get('id')}. {zone.get('label')} "
+                    f"({'attendu' if zone.get('is_target') else 'leurre'})"
+                )
+        elif qtype == "branching_scenario":
             st.markdown("**Scénario à décisions successives**")
             st.caption(
                 f"{len(question.get('scenario_nodes') or [])} étapes possibles. "
@@ -2675,7 +2696,7 @@ def render_creator_question(question: Dict[str, Any], index: int) -> None:
 
 def has_interactive_card_activity(question: Dict[str, Any]) -> bool:
     """Question widgets requiring immediate reruns cannot be nested in st.form."""
-    if question.get("type") == "branching_scenario":
+    if question.get("type") in {"branching_scenario", "image_hotspots"}:
         return True
     if is_priority_ranking_question(question):
         return can_render_ordering(extract_activity_items(question))
@@ -2701,7 +2722,11 @@ def render_interactive_preview(question: Dict[str, Any], preview_key: str) -> No
         f"Sous-domaine : {question.get('subdomain') or '-'}"
     )
     render_question_context_and_media(question)
-    if question.get("type") == "branching_scenario":
+    if question.get("type") == "image_hotspots":
+        st.markdown(question.get("question") or "")
+        answer = render_visual(question, f"{preview_key}_visual")
+        is_complete = visual_complete(question, answer)
+    elif question.get("type") == "branching_scenario":
         st.markdown(question.get("question") or "")
         answer = render_scenario(question, f"{preview_key}_scenario")
         is_complete = is_scenario_complete(question, answer)
@@ -2767,6 +2792,8 @@ def render_interactive_preview(question: Dict[str, Any], preview_key: str) -> No
             st.write(result["selected_feedback"])
         if result.get("correct_feedback"):
             st.info(result["correct_feedback"])
+        if question.get("type") == "image_hotspots":
+            render_visual_correction(question, answer)
         if question.get("remediation"):
             st.caption(f"Piste de révision : {question['remediation']}")
 

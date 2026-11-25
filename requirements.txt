@@ -13,3 +13,6 @@ psycopg[binary]>=3.2.0
 psycopg_pool>=3.2.0
 SQLAlchemy>=2.0.0
 python-dotenv>=1.0.0
+# Clickable image zones (Lot 4)
+streamlit-image-coordinates==0.4.1
+Pillow>=10.0

@@ -10,6 +10,8 @@ from typing import Any, Dict, List
 
 from utils.interactive_lot2 import parse_word_bank, usable_word_bank
 from utils.interactive_scenarios import validate_scenario
+from utils.visual_hotspots import validate_visual_question
+from utils.visual_templates import rows_to_visual_quiz
 from utils.scenario_templates import rows_to_scenario_quiz
 
 
@@ -55,6 +57,9 @@ TYPE_MAP = {
     "priorisation": "priority_ranking",
     "long_answer": "long_answer",
     "branching_scenario": "branching_scenario",
+    "image_hotspots": "image_hotspots",
+    "analyse_visuelle": "image_hotspots",
+    "zones_cliquables": "image_hotspots",
     "scenario_interactif": "branching_scenario",
     "scenario_a_embranchements": "branching_scenario",
     "essay": "long_answer",
@@ -142,8 +147,11 @@ def read_xlsx_rows(uploaded_file) -> List[Dict[str, Any]]:
     wb = load_workbook(uploaded_file, data_only=True)
     # The interactive Excel model contains a separate user guide.
     # Do not import the guide if the author last saved that sheet as active.
-    ws = (wb["Questions"] if "Questions" in wb.sheetnames else
-          wb["Scenarios"] if "Scenarios" in wb.sheetnames else wb.active)
+    ws = (
+        wb["Questions"] if "Questions" in wb.sheetnames else
+        wb["Scenarios"] if "Scenarios" in wb.sheetnames else
+        wb["Zones"] if "Zones" in wb.sheetnames else wb.active
+    )
 
     values = list(ws.iter_rows(values_only=True))
     if not values:
@@ -719,6 +727,8 @@ def read_quiz_table(uploaded_file) -> Dict[str, Any]:
 
     if rows and {"scenario_id", "node_id", "choice_id", "next_node"}.issubset(rows[0]):
         return rows_to_scenario_quiz(rows, uploaded_file.name)
+    if rows and {"visual_id", "zone_id", "x_pct", "y_pct"}.issubset(rows[0]):
+        return rows_to_visual_quiz(rows, uploaded_file.name)
     return rows_to_quiz(rows, uploaded_file.name)
 
 
@@ -874,6 +884,9 @@ def validate_imported_quiz(quiz: Dict[str, Any]) -> Dict[str, Any]:
 
         elif qtype == "branching_scenario":
             q_errors.extend(validate_scenario(question))
+
+        elif qtype == "image_hotspots":
+            q_errors.extend(validate_visual_question(question))
 
         elif qtype == "long_answer":
             if not (

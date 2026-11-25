@@ -51,6 +51,15 @@ from utils.scenario_templates import (
     example_rows as scenario_example_rows,
     rows_to_scenario_quiz, scenario_csv_bytes, scenario_xlsx_bytes,
 )
+from utils.visual_hotspots import (
+    evaluate_visual, image_url as visual_image_url,
+    render_hotspot_editor, render_visual, render_visual_correction,
+    validate_visual_question, visual_complete,
+)
+from utils.visual_templates import (
+    example_rows as visual_example_rows,
+    rows_to_visual_quiz, visual_csv_bytes, visual_xlsx_bytes,
+)
 from utils.export_utils import quiz_to_csv_bytes, quiz_to_json_bytes, quiz_to_markdown, quiz_to_markdown_bytes
 from utils.file_reader import clean_training_text, read_uploaded_file
 from utils.learner_db import (
@@ -860,7 +869,7 @@ def is_ordering_type(qtype: Any) -> bool:
 
 def is_ordering_question(question: Dict[str, Any]) -> bool:
     qtype = normalize_answer(question.get("type", "")).replace(" ", "_")
-    if qtype in {"priority_ranking", "point_allocation", "branching_scenario"}:
+    if qtype in {"priority_ranking", "point_allocation", "branching_scenario", "image_hotspots"}:
         return False
     if is_ordering_type(question.get("type", "")):
         return True
@@ -954,7 +963,7 @@ SELF_ASSESSMENT_TYPES = {
 
 def is_self_assessment_question(question: Dict[str, Any]) -> bool:
     qtype = normalize_answer(question.get("type", "")).replace(" ", "_")
-    if qtype == "branching_scenario":
+    if qtype in {"branching_scenario", "image_hotspots"}:
         return False
     if qtype in SELF_ASSESSMENT_TYPES:
         return True
@@ -1051,7 +1060,7 @@ FILL_BLANK_TYPES = {
 
 def is_fill_blank_question(question: Dict[str, Any]) -> bool:
     qtype = normalize_answer(question.get("type", "")).replace(" ", "_")
-    if qtype == "branching_scenario":
+    if qtype in {"branching_scenario", "image_hotspots"}:
         return False
     if qtype in FILL_BLANK_TYPES:
         return True
@@ -1386,6 +1395,8 @@ def evaluate_answer(question: Dict[str, Any], user_answer: Any) -> Dict[str, Any
 
     if qtype == "branching_scenario":
         return evaluate_scenario(question, user_answer)
+    if qtype == "image_hotspots":
+        return evaluate_visual(question, user_answer)
 
     if qtype in ["single_choice", "true_false"]:
         is_ok = is_single_choice_correct(str(user_answer), str(correct_answer), options)
@@ -2345,6 +2356,17 @@ def render_attempt_report(attempt: Dict[str, Any], details: List[Dict[str, Any]]
                 box(answer.get("selected_feedback") or "Réponse à corriger manuellement.")
                 st.info(answer.get("correct_feedback") or answer.get("explanation") or "Aucune correction automatique disponible.")
 
+            if snapshot.get("type") == "image_hotspots":
+                raw_answer = answer.get("user_answer_json") or "{}"
+                selected_points = (
+                    parse_json_text(raw_answer) if isinstance(raw_answer, str)
+                    else raw_answer
+                )
+                render_visual_correction(
+                    snapshot,
+                    selected_points if isinstance(selected_points, dict) else {"points": []},
+                )
+
             if answer.get("learning_objective"):
                 st.write(f"**Objectif pédagogique :** {answer['learning_objective']}")
             if answer.get("cognitive_level"):
@@ -2546,7 +2568,8 @@ def render_question_context_and_media(question: Dict[str, Any]) -> None:
                     st.markdown(text)
                 render_question_media(context_media)
 
-    render_question_media(top_media)
+    if question.get("type") != "image_hotspots":
+        render_question_media(top_media)
 
 
 def render_creator_question(question: Dict[str, Any], index: int) -> None:
@@ -2567,7 +2590,16 @@ def render_creator_question(question: Dict[str, Any], index: int) -> None:
         pairs = question.get("pairs") or []
         options = question.get("options") or []
 
-        if qtype == "branching_scenario":
+        if qtype == "image_hotspots":
+            st.markdown("**Repérage sur image — correction formateur**")
+            st.caption("Les zones vertes sont les anomalies attendues.")
+            render_visual_correction(question, {"points": []})
+            for zone in question.get("hotspots") or []:
+                st.write(
+                    f"{zone.get('id')}. {zone.get('label')} "
+                    f"({'attendu' if zone.get('is_target') else 'leurre'})"
+                )
+        elif qtype == "branching_scenario":
             st.markdown("**Scénario à décisions successives**")
             st.caption(
                 f"{len(question.get('scenario_nodes') or [])} étapes possibles. "
@@ -2675,7 +2707,7 @@ def render_creator_question(question: Dict[str, Any], index: int) -> None:
 
 def has_interactive_card_activity(question: Dict[str, Any]) -> bool:
     """Question widgets requiring immediate reruns cannot be nested in st.form."""
-    if question.get("type") == "branching_scenario":
+    if question.get("type") in {"branching_scenario", "image_hotspots"}:
         return True
     if is_priority_ranking_question(question):
         return can_render_ordering(extract_activity_items(question))
@@ -2701,7 +2733,11 @@ def render_interactive_preview(question: Dict[str, Any], preview_key: str) -> No
         f"Sous-domaine : {question.get('subdomain') or '-'}"
     )
     render_question_context_and_media(question)
-    if question.get("type") == "branching_scenario":
+    if question.get("type") == "image_hotspots":
+        st.markdown(question.get("question") or "")
+        answer = render_visual(question, f"{preview_key}_visual")
+        is_complete = visual_complete(question, answer)
+    elif question.get("type") == "branching_scenario":
         st.markdown(question.get("question") or "")
         answer = render_scenario(question, f"{preview_key}_scenario")
         is_complete = is_scenario_complete(question, answer)
@@ -2767,6 +2803,8 @@ def render_interactive_preview(question: Dict[str, Any], preview_key: str) -> No
             st.write(result["selected_feedback"])
         if result.get("correct_feedback"):
             st.info(result["correct_feedback"])
+        if question.get("type") == "image_hotspots":
+            render_visual_correction(question, answer)
         if question.get("remediation"):
             st.caption(f"Piste de révision : {question['remediation']}")
 
@@ -2790,6 +2828,11 @@ def render_test_question(
 
     options = question.get("options") or []
     pairs = question.get("pairs") or []
+
+    if qtype == "image_hotspots":
+        return render_visual(
+            question, f"attempt_{attempt_id or 'preview'}_question_{index}_visual"
+        )
 
     if qtype == "branching_scenario":
         return render_scenario(
@@ -3057,6 +3100,9 @@ def render_session_question(
     prefix = f"session_{session_id}_{index}"
     lot2_key = f"session_{session_id}_participant_{participant_id or 'preview'}_question_{index}"
 
+    if qtype == "image_hotspots":
+        return render_visual(question, f"{lot2_key}_visual")
+
     if qtype == "branching_scenario":
         return render_scenario(question, f"{lot2_key}_scenario")
 
@@ -3280,6 +3326,16 @@ def render_session_correction(answer: Dict[str, Any], question: Dict[str, Any]) 
     else:
         st.warning(answer.get("selected_feedback") or "Réponse enregistrée, à corriger manuellement.")
         st.info(answer.get("correct_feedback") or question.get("explanation", "") or "Correction indisponible.")
+    if question.get("type") == "image_hotspots":
+        raw_answer = answer.get("user_answer_json") or answer.get("user_answer") or {}
+        selected_points = (
+            parse_json_text(raw_answer) if isinstance(raw_answer, str)
+            else raw_answer
+        )
+        render_visual_correction(
+            question,
+            selected_points if isinstance(selected_points, dict) else {"points": []},
+        )
 
 def _manual_lines(value: str) -> List[str]:
     return [
@@ -3337,6 +3393,7 @@ def _manual_type_label(value: str) -> str:
         "point_allocation": "Répartition de points",
         "priority_ranking": "Priorisation / classement",
         "branching_scenario": "Scénario à décisions successives",
+        "image_hotspots": "Analyse visuelle — zones cliquables",
         "short_answer": "Réponse libre courte",
         "long_answer": "Réponse rédigée longue",
     }
@@ -3493,6 +3550,55 @@ def trainer_app() -> None:
         st.subheader("Importer ou coller un support de formation")
 
         with st.expander(
+            "Lot 4 — Analyse visuelle · cliquer sur les zones d'une image",
+            expanded=False,
+        ):
+            st.write(
+                "Teste le repérage directement sur une image. Les points sont "
+                "mémorisés pendant cet essai seulement, sans écriture en base."
+            )
+            visual_questions = rows_to_visual_quiz(
+                visual_example_rows(), filename="exemples_analyse_visuelle.xlsx"
+            )["questions"]
+            visual_index = st.selectbox(
+                "Choisir un exercice visuel",
+                options=list(range(len(visual_questions))),
+                format_func=lambda i: (
+                    f"{visual_questions[i].get('domain')} — "
+                    f"{visual_questions[i].get('question')}"
+                ),
+                key="trainer_visual_demo_index",
+            )
+            render_interactive_preview(
+                visual_questions[visual_index],
+                f"trainer_visual_demo_{visual_index}",
+            )
+            vc1, vc2 = st.columns(2)
+            with vc1:
+                st.download_button(
+                    "Télécharger le modèle Excel — zones cliquables",
+                    data=visual_xlsx_bytes(),
+                    file_name="modele_analyse_visuelle_zones.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key="trainer_visual_model_xlsx",
+                    width="stretch",
+                )
+            with vc2:
+                st.download_button(
+                    "Télécharger le modèle CSV — zones cliquables",
+                    data=visual_csv_bytes(),
+                    file_name="modele_analyse_visuelle_zones.csv",
+                    mime="text/csv",
+                    key="trainer_visual_model_csv",
+                    width="stretch",
+                )
+            st.caption(
+                "Une ligne du modèle représente une zone. Plusieurs lignes "
+                "portant le même visual_id constituent un exercice. "
+                "L'import industriel existant les ajoute ensuite à la banque."
+            )
+
+        with st.expander(
             "Lot 3 — Scénarios à décisions successives · aperçu apprenti sans enregistrer",
             expanded=False,
         ):
@@ -3646,6 +3752,10 @@ Pour une image, renseigne `media_url`, puis éventuellement `media_caption` et `
                 )
 
             st.markdown("#### Modèles d'import des exercices interactifs")
+            st.caption(
+                "Lot 4 : le modèle spécifique aux zones visuelles est téléchargeable "
+                "depuis la démonstration plus haut. Il est compatible avec le même import."
+            )
             st.caption("Pour les scénarios à embranchements, utilise le modèle spécifique du lot 3 dans l'aperçu ci-dessus. Les modèles ci-dessous concernent les lots 1 et 2.")
             st.markdown("**Lots 1 et 2 — cartes et étiquettes**")
             st.caption(
@@ -3973,6 +4083,7 @@ Pour une image, renseigne `media_url`, puis éventuellement `media_caption` et `
                     "fill_blank",
                     "self_assessment",
                     "branching_scenario",
+                    "image_hotspots",
                 ],
                 format_func=_manual_type_label,
                 key="manual_question_type",
@@ -4308,6 +4419,29 @@ Pour une image, renseigne `media_url`, puis éventuellement `media_caption` et `
         elif manual_type == "branching_scenario":
             type_payload.update(render_manual_scenario_editor())
 
+        elif manual_type == "image_hotspots":
+            st.caption(
+                "Téléverse une image (ou indique une URL HTTPS) dans la section "
+                "Illustration ci-dessus. Clique sur l'image pour ajouter les "
+                "anomalies à identifier et les éventuels leurres."
+            )
+            visual_src = ""
+            if manual_media_mode == "URL":
+                visual_src = manual_media_url.strip()
+            elif manual_media_mode == "Téléverser une image" and manual_media_upload is not None:
+                try:
+                    visual_src = _manual_image_data_url(manual_media_upload)
+                except ValueError as exc:
+                    st.error(str(exc))
+            if visual_src:
+                source_id = hashlib.sha256(visual_src.encode("utf-8")).hexdigest()[:12]
+                type_payload["hotspots"] = render_hotspot_editor(
+                    visual_src, f"manual_visual_zones_{source_id}"
+                )
+            else:
+                st.info("Choisis d'abord une illustration dans la rubrique Média.")
+                type_payload["hotspots"] = []
+
         elif manual_type == "fill_blank":
             st.caption(
                 "Utilise [...] pour chaque trou. Tu peux proposer des étiquettes "
@@ -4502,6 +4636,10 @@ Pour une image, renseigne `media_url`, puis éventuellement `media_caption` et `
 
                 if media_payload:
                     question_payload["media"] = media_payload
+                if manual_type == "image_hotspots":
+                    issues = validate_visual_question(question_payload)
+                    if issues:
+                        raise ValueError(" / ".join(issues[:4]))
 
                 st.session_state.manual_question_preview = question_payload
                 st.success("Question préparée. Contrôle l'aperçu avant de l'ajouter.")

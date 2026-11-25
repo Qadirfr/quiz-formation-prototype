@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="440" viewBox="0 0 800 440">
+<rect width="800" height="440" fill="#f4f7f6"/>
+<rect width="800" height="90" fill="#124433"/>
+<text x="38" y="43" font-family="Arial,sans-serif" font-size="27" font-weight="bold" fill="#fff">Console de suivi SSI</text>
+<text x="40" y="71" font-family="Arial,sans-serif" font-size="16" fill="#c5dcd2">Extrait pédagogique fictif — revue des contrôles</text>
+<text x="40" y="126" font-family="Arial,sans-serif" font-size="21" font-weight="bold" fill="#243a31">Indicateurs du mois</text>
+<rect x="40" y="148" width="220" height="154" rx="15" fill="#fff" stroke="#b7c9bf" stroke-width="2"/>
+<text x="60" y="188" font-family="Arial,sans-serif" font-size="18" fill="#335247">MFA utilisateurs</text><text x="60" y="255" font-family="Arial,sans-serif" font-size="48" font-weight="bold" fill="#17643d">99 %</text>
+<rect x="285" y="148" width="230" height="154" rx="15" fill="#fff4ea" stroke="#c47c33" stroke-width="3"/>
+<text x="306" y="186" font-family="Arial,sans-serif" font-size="17" fill="#65401d">Comptes privilégiés</text>
+<text x="306" y="225" font-family="Arial,sans-serif" font-size="24" font-weight="bold" fill="#ae501c">12 inactifs</text>
+<text x="306" y="258" font-family="Arial,sans-serif" font-size="17" fill="#65401d">toujours habilités</text>
+<rect x="540" y="148" width="220" height="154" rx="15" fill="#fff" stroke="#b7c9bf" stroke-width="2"/>
+<text x="560" y="188" font-family="Arial,sans-serif" font-size="18" fill="#335247">Sauvegardes</text><text x="560" y="255" font-family="Arial,sans-serif" font-size="43" font-weight="bold" fill="#17643d">OK</text>
+<rect x="40" y="325" width="720" height="84" rx="12" fill="#e8f0ed"/>
+<text x="60" y="356" font-family="Arial,sans-serif" font-size="18" fill="#304e41">Objectif : identifier l'indicateur nécessitant une investigation</text>
+<text x="60" y="384" font-family="Arial,sans-serif" font-size="15" fill="#526a5d">Les données, noms et chiffres de cette maquette sont fictifs.</text>
+</svg>

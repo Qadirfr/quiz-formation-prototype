@@ -2356,6 +2356,17 @@ def render_attempt_report(attempt: Dict[str, Any], details: List[Dict[str, Any]]
                 box(answer.get("selected_feedback") or "Réponse à corriger manuellement.")
                 st.info(answer.get("correct_feedback") or answer.get("explanation") or "Aucune correction automatique disponible.")
 
+            if snapshot.get("type") == "image_hotspots":
+                raw_answer = answer.get("user_answer_json") or "{}"
+                selected_points = (
+                    parse_json_text(raw_answer) if isinstance(raw_answer, str)
+                    else raw_answer
+                )
+                render_visual_correction(
+                    snapshot,
+                    selected_points if isinstance(selected_points, dict) else {"points": []},
+                )
+
             if answer.get("learning_objective"):
                 st.write(f"**Objectif pédagogique :** {answer['learning_objective']}")
             if answer.get("cognitive_level"):
@@ -3315,6 +3326,16 @@ def render_session_correction(answer: Dict[str, Any], question: Dict[str, Any]) 
     else:
         st.warning(answer.get("selected_feedback") or "Réponse enregistrée, à corriger manuellement.")
         st.info(answer.get("correct_feedback") or question.get("explanation", "") or "Correction indisponible.")
+    if question.get("type") == "image_hotspots":
+        raw_answer = answer.get("user_answer_json") or answer.get("user_answer") or {}
+        selected_points = (
+            parse_json_text(raw_answer) if isinstance(raw_answer, str)
+            else raw_answer
+        )
+        render_visual_correction(
+            question,
+            selected_points if isinstance(selected_points, dict) else {"points": []},
+        )
 
 def _manual_lines(value: str) -> List[str]:
     return [
